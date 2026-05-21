@@ -29,7 +29,7 @@ input bool   EnableTrendFallback      = true;
 input bool   UseMarketForTrendFallback = true;
 
 input int    StopLossPoints           = 1000;
-input int    TakeProfitPoints         = 1800;
+input int    TakeProfitPoints         = 100;
 
 input bool   UseLimitOrders           = true;
 input int    LimitOffsetPoints        = 40;
