@@ -37,6 +37,9 @@ input bool   DeleteOppositePending    = true;
 input bool   RefreshStalePending      = true;
 
 input bool   UseTrailingStop          = true;
+input bool   UseAutoSLPlus            = true;
+input int    SLPlusTriggerPoints      = 300;
+input int    SLPlusLockPoints         = 80;
 input int    TrailStartPoints         = 500;
 input int    TrailStepPoints          = 250;
 
@@ -325,6 +328,14 @@ void ManageTrailingStop()
       if(type == POSITION_TYPE_BUY)
       {
          double profitPoints = (bid - openPrice) / point;
+
+         if(UseAutoSLPlus && profitPoints >= SLPlusTriggerPoints)
+         {
+            double slPlus = NormalizeDouble(openPrice + SLPlusLockPoints * point, digits);
+            if(sl == 0.0 || slPlus > sl)
+               trade.PositionModify(ticket, slPlus, tp);
+         }
+
          if(profitPoints >= TrailStartPoints)
          {
             double newSL = NormalizeDouble(bid - TrailStepPoints * point, digits);
@@ -334,6 +345,14 @@ void ManageTrailingStop()
       else if(type == POSITION_TYPE_SELL)
       {
          double profitPoints = (openPrice - ask) / point;
+
+         if(UseAutoSLPlus && profitPoints >= SLPlusTriggerPoints)
+         {
+            double slPlus = NormalizeDouble(openPrice - SLPlusLockPoints * point, digits);
+            if(sl == 0.0 || slPlus < sl)
+               trade.PositionModify(ticket, slPlus, tp);
+         }
+
          if(profitPoints >= TrailStartPoints)
          {
             double newSL = NormalizeDouble(ask + TrailStepPoints * point, digits);
