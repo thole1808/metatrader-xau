@@ -25,6 +25,8 @@ input double BuyRSILevel              = 48.0;
 input double SellRSILevel             = 52.0;
 input bool   UseFastEntryMode         = true;
 input int    SignalLookbackBars       = 2;
+input bool   EnableTrendFallback      = true;
+input bool   UseMarketForTrendFallback = true;
 
 input int    StopLossPoints           = 1000;
 input int    TakeProfitPoints         = 1800;
@@ -143,6 +145,11 @@ void OnTick()
    bool sellSignal = false;
    if(!GetSignals(buySignal, sellSignal)) return;
 
+   bool fallbackBuySignal = false;
+   bool fallbackSellSignal = false;
+   if(EnableTrendFallback)
+      GetTrendFallbackSignals(fallbackBuySignal, fallbackSellSignal);
+
    int myPositions = CountMyPositions();
    int currentType = GetMyPositionType();
 
@@ -190,6 +197,22 @@ void OnTick()
       if(DeleteOppositePending) DeleteMyPendingOrders();
       PlaceEntry(false, candleTime, "BOT SELL LIMIT");
    }
+   else if(fallbackBuySignal)
+   {
+      if(DeleteOppositePending) DeleteMyPendingOrders();
+      if(UseMarketForTrendFallback)
+         PlaceEntryMarket(true, candleTime, "TREND FALLBACK BUY");
+      else
+         PlaceEntry(true, candleTime, "TREND FALLBACK BUY LIMIT");
+   }
+   else if(fallbackSellSignal)
+   {
+      if(DeleteOppositePending) DeleteMyPendingOrders();
+      if(UseMarketForTrendFallback)
+         PlaceEntryMarket(false, candleTime, "TREND FALLBACK SELL");
+      else
+         PlaceEntry(false, candleTime, "TREND FALLBACK SELL LIMIT");
+   }
    else
    {
       lastStatus = "Waiting signal";
@@ -199,6 +222,7 @@ void OnTick()
 //+------------------------------------------------------------------+
 bool GetSignals(bool &buySignal, bool &sellSignal)
 {
+   // Reversal entry prefers a confirmed candle close with trend support.
    double trendEMA[1];
    double entryEMA[2];
    double rsi[3];
@@ -240,8 +264,44 @@ bool GetSignals(bool &buySignal, bool &sellSignal)
 }
 
 //+------------------------------------------------------------------+
+void GetTrendFallbackSignals(bool &buySignal, bool &sellSignal)
+{
+   buySignal = false;
+   sellSignal = false;
+
+   double trendEMA[1];
+   double entryEMA[2];
+   double rsi[2];
+
+   ArraySetAsSeries(trendEMA, true);
+   ArraySetAsSeries(entryEMA, true);
+   ArraySetAsSeries(rsi, true);
+
+   if(CopyBuffer(trendEmaHandle, 0, 0, 1, trendEMA) <= 0) return;
+   if(CopyBuffer(entryEmaHandle, 0, 0, 2, entryEMA) <= 0) return;
+   if(CopyBuffer(rsiHandle, 0, 0, 2, rsi) <= 0) return;
+
+   double close1 = iClose(symbolName, _Period, 1);
+   double high1 = iHigh(symbolName, _Period, 1);
+   double low1 = iLow(symbolName, _Period, 1);
+   double close2 = iClose(symbolName, _Period, 2);
+   double high2 = iHigh(symbolName, _Period, 2);
+   double low2 = iLow(symbolName, _Period, 2);
+   double trendClose = iClose(symbolName, TrendTF, 1);
+
+   bool strongUpTrend = trendClose > trendEMA[0] && close1 > entryEMA[0] && close1 > close2;
+   bool strongDownTrend = trendClose < trendEMA[0] && close1 < entryEMA[0] && close1 < close2;
+   bool makingHigherHigh = high1 >= high2;
+   bool makingLowerLow = low1 <= low2;
+
+   buySignal = strongUpTrend && makingHigherHigh && rsi[0] >= BuyRSILevel + 2.0;
+   sellSignal = strongDownTrend && makingLowerLow && rsi[0] <= SellRSILevel - 2.0;
+}
+
+//+------------------------------------------------------------------+
 void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason)
 {
+   // Limit entry tries to get a slightly better price than immediate market execution.
    double ask = SymbolInfoDouble(symbolName, SYMBOL_ASK);
    double bid = SymbolInfoDouble(symbolName, SYMBOL_BID);
    double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
@@ -281,6 +341,18 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
       LogStatus(side + " LIMIT rejected: " + trade.ResultRetcodeDescription());
       if(!FallbackMarketIfRejected) return;
    }
+
+   PlaceEntryMarket(isBuy, candleTime, reason + " MARKET");
+}
+
+//+------------------------------------------------------------------+
+void PlaceEntryMarket(const bool isBuy, const datetime candleTime, const string reason)
+{
+   // Market fallback keeps the bot active when pending limits are not suitable.
+   double ask = SymbolInfoDouble(symbolName, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(symbolName, SYMBOL_BID);
+   double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+   int digits = (int)SymbolInfoInteger(symbolName, SYMBOL_DIGITS);
 
    double marketEntry = isBuy ? ask : bid;
    double marketSL = isBuy ? marketEntry - StopLossPoints * point : marketEntry + StopLossPoints * point;
