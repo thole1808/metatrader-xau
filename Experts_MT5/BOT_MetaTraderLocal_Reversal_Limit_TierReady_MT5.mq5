@@ -29,7 +29,7 @@ input bool   EnableTrendFallback      = true;
 input bool   UseMarketForTrendFallback = true;
 
 input int    StopLossPoints           = 1000;
-input int    TakeProfitPoints         = 100;
+input int    TakeProfitPoints         = 1000;            // About 100 pips target per run
 
 input bool   UseLimitOrders           = true;
 input int    LimitOffsetPoints        = 40;
@@ -40,10 +40,10 @@ input bool   RefreshStalePending      = true;
 
 input bool   UseTrailingStop          = true;
 input bool   UseAutoSLPlus            = true;
-input int    SLPlusTriggerPoints      = 300;
+input int    SLPlusTriggerPoints      = 200;
 input int    SLPlusLockPoints         = 80;
-input int    TrailStartPoints         = 500;
-input int    TrailStepPoints          = 250;
+input int    TrailStartPoints         = 300;
+input int    TrailStepPoints          = 150;
 
 input double DailyMaxLossMoney        = 150.0;
 input double DailyTargetMoney         = 300.0;
