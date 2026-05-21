@@ -104,7 +104,9 @@ int OnInit()
    }
 
    ResetDailyEquity();
-   LogStatus("BOT Reversal Limit active on " + symbolName + " | Lot: " + DoubleToString(LotSize, 2) + " | LimitOrders: " + (UseLimitOrders ? "ON" : "OFF"));
+   string limitOrdersLabel = "OFF";
+   if(UseLimitOrders) limitOrdersLabel = "ON";
+   LogStatus("BOT Reversal Limit active on " + symbolName + " | Lot: " + DoubleToString(LotSize, 2) + " | LimitOrders: " + limitOrdersLabel);
    SendTelegram("BOT Reversal Limit ACTIVE\nSymbol: " + symbolName + "\nLot: " + DoubleToString(LotSize, 2) + "\nMode: REVERSAL / LIMIT / NO GRID / NO MARTINGALE");
 
    return INIT_SUCCEEDED;
@@ -321,7 +323,8 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
    tp = NormalizeDouble(tp, digits);
 
    bool result = false;
-   string side = isBuy ? "BUY" : "SELL";
+   string side = "SELL";
+   if(isBuy) side = "BUY";
 
    if(UseLimitOrders)
    {
@@ -340,7 +343,8 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
          return;
       }
 
-      LogStatus(side + " LIMIT rejected: " + trade.ResultRetcodeDescription());
+      string limitRejectReason = trade.ResultRetcodeDescription();
+      LogStatus(side + " LIMIT rejected: " + limitRejectReason);
       if(!FallbackMarketIfRejected) return;
    }
 
@@ -355,6 +359,9 @@ void PlaceEntryMarket(const bool isBuy, const datetime candleTime, const string 
    double bid = SymbolInfoDouble(symbolName, SYMBOL_BID);
    double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
    int digits = (int)SymbolInfoInteger(symbolName, SYMBOL_DIGITS);
+   bool result = false;
+   string side = "SELL";
+   if(isBuy) side = "BUY";
 
    double marketEntry = isBuy ? ask : bid;
    double marketSL = isBuy ? marketEntry - StopLossPoints * point : marketEntry + StopLossPoints * point;
@@ -375,8 +382,10 @@ void PlaceEntryMarket(const bool isBuy, const datetime candleTime, const string 
    }
    else
    {
-      LogStatus(side + " MARKET failed: " + trade.ResultRetcodeDescription());
-      SendTelegram(side + " ENTRY FAILED\nSymbol: " + symbolName + "\nReason: " + trade.ResultRetcodeDescription());
+      string failReason = trade.ResultRetcodeDescription();
+      string failMessage = side + " ENTRY FAILED\nSymbol: " + symbolName + "\nReason: " + failReason;
+      LogStatus(side + " MARKET failed: " + failReason);
+      SendTelegram(failMessage);
    }
 }
 
@@ -483,7 +492,11 @@ void CloseMyPositions()
       if(PositionSelectByTicket(ticket) && PositionGetString(POSITION_SYMBOL) == symbolName && PositionGetInteger(POSITION_MAGIC) == MagicNumber)
       {
          if(trade.PositionClose(ticket)) LogStatus("Closed position ticket: " + IntegerToString((int)ticket));
-         else LogStatus("Close failed: " + trade.ResultRetcodeDescription());
+         else
+         {
+            string closeFailReason = trade.ResultRetcodeDescription();
+            LogStatus("Close failed: " + closeFailReason);
+         }
       }
    }
 }
@@ -600,8 +613,9 @@ bool IsDailyLimitReached()
 void ShowPanel()
 {
    double dailyPL = AccountInfoDouble(ACCOUNT_EQUITY) - startDayEquity;
+   string tfLabel = EnumToString((ENUM_TIMEFRAMES)_Period);
    Comment("BOT MetaTraderLocal Reversal Limit\n",
-           "Symbol: ", symbolName, " | TF: ", EnumToString(_Period), "\n",
+           "Symbol: ", symbolName, " | TF: ", tfLabel, "\n",
            "Positions: ", CountMyPositions(), " | Pending: ", CountMyPendingOrders(), "\n",
            "Daily P/L: ", DoubleToString(dailyPL, 2), "\n",
            "Lot: ", DoubleToString(LotSize, 2), " | Spread: ", IntegerToString((int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD)), "\n",
