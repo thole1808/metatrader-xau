@@ -11,7 +11,7 @@ CTrade trade;
 
 // ================= INPUT TRADING =================
 input string TradeSymbol              = "XAUUSDc";
-input double LotSize                  = 0.02;
+input double LotSize                  = 0.01;
 input int    MagicNumber              = 2026051912;
 input int    MaxSpreadPoints          = 300;
 input int    SlippagePoints           = 50;
