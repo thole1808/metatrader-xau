@@ -75,6 +75,8 @@ bool dailyTargetSent = false;
 bool dailyLossSent = false;
 string lastStatus = "Starting";
 datetime lastPendingRefreshTime = 0;
+int lastKnownPositionCount = 0;
+datetime lastReentryLogTime = 0;
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -156,6 +158,12 @@ void OnTick()
 
    int myPositions = CountMyPositions();
    int currentType = GetMyPositionType();
+   if(lastKnownPositionCount > 0 && myPositions == 0)
+   {
+      LogStatus("No open position detected. Waiting for next valid re-entry signal.");
+      lastReentryLogTime = TimeCurrent();
+   }
+   lastKnownPositionCount = myPositions;
 
    if(myPositions > 0)
    {
@@ -193,16 +201,31 @@ void OnTick()
 
    if(buySignal)
    {
+      if(TimeCurrent() - lastReentryLogTime > 5)
+      {
+         LogStatus("Valid re-entry signal detected: BUY reversal setup.");
+         lastReentryLogTime = TimeCurrent();
+      }
       if(DeleteOppositePending) DeleteMyPendingOrders();
       PlaceEntry(true, candleTime, "BOT BUY LIMIT");
    }
    else if(sellSignal)
    {
+      if(TimeCurrent() - lastReentryLogTime > 5)
+      {
+         LogStatus("Valid re-entry signal detected: SELL reversal setup.");
+         lastReentryLogTime = TimeCurrent();
+      }
       if(DeleteOppositePending) DeleteMyPendingOrders();
       PlaceEntry(false, candleTime, "BOT SELL LIMIT");
    }
    else if(fallbackBuySignal)
    {
+      if(TimeCurrent() - lastReentryLogTime > 5)
+      {
+         LogStatus("Valid re-entry signal detected: BUY trend fallback.");
+         lastReentryLogTime = TimeCurrent();
+      }
       if(DeleteOppositePending) DeleteMyPendingOrders();
       if(UseMarketForTrendFallback)
          PlaceEntryMarket(true, candleTime, "TREND FALLBACK BUY");
@@ -211,6 +234,11 @@ void OnTick()
    }
    else if(fallbackSellSignal)
    {
+      if(TimeCurrent() - lastReentryLogTime > 5)
+      {
+         LogStatus("Valid re-entry signal detected: SELL trend fallback.");
+         lastReentryLogTime = TimeCurrent();
+      }
       if(DeleteOppositePending) DeleteMyPendingOrders();
       if(UseMarketForTrendFallback)
          PlaceEntryMarket(false, candleTime, "TREND FALLBACK SELL");
