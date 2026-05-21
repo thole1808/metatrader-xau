@@ -27,6 +27,9 @@ input bool   UseFastEntryMode         = true;
 input int    SignalLookbackBars       = 2;
 input bool   EnableTrendFallback      = true;
 input bool   UseMarketForTrendFallback = true;           // Keep trend-follow entries immediate; limit is for reversal mode
+input bool   RequireCandleConfirmation = true;
+input int    MinSignalBodyPoints      = 60;
+input double MaxOppositeWickRatio     = 1.20;
 
 input int    StopLossPoints           = 1000;
 input int    TakeProfitPoints         = 500;             // About 50 pips target per run
@@ -264,8 +267,14 @@ bool GetSignals(bool &buySignal, bool &sellSignal)
    double trendClose = iClose(symbolName, TrendTF, 1);
    double close1 = iClose(symbolName, _Period, 1);
    double open1 = iOpen(symbolName, _Period, 1);
+   double high1 = iHigh(symbolName, _Period, 1);
+   double low1 = iLow(symbolName, _Period, 1);
    int lookbackShift = MathMax(2, SignalLookbackBars);
    double close2 = iClose(symbolName, _Period, lookbackShift);
+   double open2 = iOpen(symbolName, _Period, 2);
+   double high2 = iHigh(symbolName, _Period, 2);
+   double low2 = iLow(symbolName, _Period, 2);
+   double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
 
    bool trendBuy = trendClose > trendEMA[0];
    bool trendSell = trendClose < trendEMA[0];
@@ -273,17 +282,41 @@ bool GetSignals(bool &buySignal, bool &sellSignal)
    bool bearishCandle = close1 < open1;
    bool priceImprovingBuy = close1 >= close2;
    bool priceImprovingSell = close1 <= close2;
+   double body1 = MathAbs(close1 - open1);
+   double upperWick1 = high1 - MathMax(open1, close1);
+   double lowerWick1 = MathMin(open1, close1) - low1;
+   bool bullishPrevCandle = close2 > open2;
+   bool bearishPrevCandle = close2 < open2;
+   bool higherLowStructure = low1 >= low2;
+   bool lowerHighStructure = high1 <= high2;
 
-   buySignal = trendBuy && close1 > entryEMA[0] && bullishCandle && rsi[0] >= BuyRSILevel;
-   sellSignal = trendSell && close1 < entryEMA[0] && bearishCandle && rsi[0] <= SellRSILevel;
+   bool candleConfirmBuy = true;
+   bool candleConfirmSell = true;
+   if(RequireCandleConfirmation)
+   {
+      candleConfirmBuy = bullishCandle &&
+                         bullishPrevCandle &&
+                         higherLowStructure &&
+                         body1 >= MinSignalBodyPoints * point &&
+                         upperWick1 <= body1 * MaxOppositeWickRatio;
+
+      candleConfirmSell = bearishCandle &&
+                          bearishPrevCandle &&
+                          lowerHighStructure &&
+                          body1 >= MinSignalBodyPoints * point &&
+                          lowerWick1 <= body1 * MaxOppositeWickRatio;
+   }
+
+   buySignal = trendBuy && close1 > entryEMA[0] && candleConfirmBuy && rsi[0] >= BuyRSILevel;
+   sellSignal = trendSell && close1 < entryEMA[0] && candleConfirmSell && rsi[0] <= SellRSILevel;
 
    if(UseFastEntryMode)
    {
       bool buyMomentum = rsi[0] >= BuyRSILevel && rsi[1] >= BuyRSILevel - 2.0;
       bool sellMomentum = rsi[0] <= SellRSILevel && rsi[1] <= SellRSILevel + 2.0;
 
-      buySignal = buySignal || (trendBuy && close1 > entryEMA[1] && buyMomentum && priceImprovingBuy);
-      sellSignal = sellSignal || (trendSell && close1 < entryEMA[1] && sellMomentum && priceImprovingSell);
+      buySignal = buySignal || (trendBuy && close1 > entryEMA[1] && buyMomentum && priceImprovingBuy && candleConfirmBuy);
+      sellSignal = sellSignal || (trendSell && close1 < entryEMA[1] && sellMomentum && priceImprovingSell && candleConfirmSell);
    }
 
    return true;
@@ -308,20 +341,29 @@ void GetTrendFallbackSignals(bool &buySignal, bool &sellSignal)
    if(CopyBuffer(rsiHandle, 0, 0, 2, rsi) <= 0) return;
 
    double close1 = iClose(symbolName, _Period, 1);
+   double open1 = iOpen(symbolName, _Period, 1);
    double high1 = iHigh(symbolName, _Period, 1);
    double low1 = iLow(symbolName, _Period, 1);
    double close2 = iClose(symbolName, _Period, 2);
+   double open2 = iOpen(symbolName, _Period, 2);
    double high2 = iHigh(symbolName, _Period, 2);
    double low2 = iLow(symbolName, _Period, 2);
    double trendClose = iClose(symbolName, TrendTF, 1);
+   double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
 
    bool strongUpTrend = trendClose > trendEMA[0] && close1 > entryEMA[0] && close1 > close2;
    bool strongDownTrend = trendClose < trendEMA[0] && close1 < entryEMA[0] && close1 < close2;
    bool makingHigherHigh = high1 >= high2;
    bool makingLowerLow = low1 <= low2;
+   double body1 = MathAbs(close1 - open1);
+   bool bullishPrevCandle = close2 > open2;
+   bool bearishPrevCandle = close2 < open2;
 
-   buySignal = strongUpTrend && makingHigherHigh && rsi[0] >= BuyRSILevel + 2.0;
-   sellSignal = strongDownTrend && makingLowerLow && rsi[0] <= SellRSILevel - 2.0;
+   bool fallbackBuyConfirm = body1 >= MinSignalBodyPoints * point && bullishPrevCandle;
+   bool fallbackSellConfirm = body1 >= MinSignalBodyPoints * point && bearishPrevCandle;
+
+   buySignal = strongUpTrend && makingHigherHigh && fallbackBuyConfirm && rsi[0] >= BuyRSILevel + 2.0;
+   sellSignal = strongDownTrend && makingLowerLow && fallbackSellConfirm && rsi[0] <= SellRSILevel - 2.0;
 }
 
 //+------------------------------------------------------------------+
