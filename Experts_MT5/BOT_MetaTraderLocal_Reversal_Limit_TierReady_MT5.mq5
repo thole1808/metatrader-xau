@@ -26,7 +26,7 @@ input double SellRSILevel             = 52.0;
 input bool   UseFastEntryMode         = true;
 input int    SignalLookbackBars       = 2;
 input bool   EnableTrendFallback      = true;
-input bool   UseMarketForTrendFallback = true;
+input bool   UseMarketForTrendFallback = true;           // Keep trend-follow entries immediate; limit is for reversal mode
 
 input int    StopLossPoints           = 1000;
 input int    TakeProfitPoints         = 500;             // About 50 pips target per run
@@ -227,10 +227,7 @@ void OnTick()
          lastReentryLogTime = TimeCurrent();
       }
       if(DeleteOppositePending) DeleteMyPendingOrders();
-      if(UseMarketForTrendFallback)
-         PlaceEntryMarket(true, candleTime, "TREND FALLBACK BUY");
-      else
-         PlaceEntry(true, candleTime, "TREND FALLBACK BUY LIMIT");
+      PlaceEntryMarket(true, candleTime, "TREND FALLBACK BUY");
    }
    else if(fallbackSellSignal)
    {
@@ -240,10 +237,7 @@ void OnTick()
          lastReentryLogTime = TimeCurrent();
       }
       if(DeleteOppositePending) DeleteMyPendingOrders();
-      if(UseMarketForTrendFallback)
-         PlaceEntryMarket(false, candleTime, "TREND FALLBACK SELL");
-      else
-         PlaceEntry(false, candleTime, "TREND FALLBACK SELL LIMIT");
+      PlaceEntryMarket(false, candleTime, "TREND FALLBACK SELL");
    }
    else
    {
