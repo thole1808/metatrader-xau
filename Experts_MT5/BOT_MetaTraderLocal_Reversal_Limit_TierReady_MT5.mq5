@@ -182,6 +182,7 @@ string BuildAccountTotalSummary()
    double grossWin, grossLoss, netProfit;
    int closedDeals;
    GetAccountHistoryTotals(grossWin, grossLoss, netProfit, closedDeals);
+   double dailyPL = AccountInfoDouble(ACCOUNT_EQUITY) - startDayEquity;
 
    double recoveryNeeded = 0.0;
    if(netProfit < 0.0) recoveryNeeded = MathAbs(netProfit);
@@ -191,7 +192,72 @@ string BuildAccountTotalSummary()
           "\nTotal menang: " + DoubleToString(grossWin, 2) +
           "\nTotal rugi: " + DoubleToString(grossLoss, 2) +
           "\nNet total: " + DoubleToString(netProfit, 2) +
+          "\nProfit hari ini: " + DoubleToString(dailyPL, 2) +
           "\nRecovery ke BE: " + DoubleToString(recoveryNeeded, 2));
+}
+
+double PointsToPips(const double pointsValue)
+{
+   return(pointsValue / 10.0);
+}
+
+bool IsMarketSessionOpen()
+{
+   long tradeMode = SymbolInfoInteger(symbolName, SYMBOL_TRADE_MODE);
+   if(tradeMode == SYMBOL_TRADE_MODE_DISABLED || tradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
+      return(false);
+
+   MqlDateTime nowStruct;
+   TimeToStruct(TimeCurrent(), nowStruct);
+   int nowSeconds = nowStruct.hour * 3600 + nowStruct.min * 60 + nowStruct.sec;
+
+   bool foundSession = false;
+   for(int sessionIndex = 0; sessionIndex < 10; sessionIndex++)
+   {
+      datetime fromTime, toTime;
+      if(!SymbolInfoSessionTrade(symbolName, (ENUM_DAY_OF_WEEK)nowStruct.day_of_week, sessionIndex, fromTime, toTime))
+         break;
+
+      foundSession = true;
+      MqlDateTime fromStruct, toStruct;
+      TimeToStruct(fromTime, fromStruct);
+      TimeToStruct(toTime, toStruct);
+      int fromSeconds = fromStruct.hour * 3600 + fromStruct.min * 60 + fromStruct.sec;
+      int toSeconds = toStruct.hour * 3600 + toStruct.min * 60 + toStruct.sec;
+
+      if(fromSeconds <= toSeconds)
+      {
+         if(nowSeconds >= fromSeconds && nowSeconds <= toSeconds) return(true);
+      }
+      else
+      {
+         if(nowSeconds >= fromSeconds || nowSeconds <= toSeconds) return(true);
+      }
+   }
+
+   if(foundSession) return(false);
+
+   double ask = SymbolInfoDouble(symbolName, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(symbolName, SYMBOL_BID);
+   return(ask > 0.0 && bid > 0.0);
+}
+
+double GetPositionEntryPriceFromHistory(const ulong positionId)
+{
+   if(positionId == 0 || !HistorySelect(0, TimeCurrent())) return(0.0);
+
+   int totalDeals = HistoryDealsTotal();
+   for(int i = 0; i < totalDeals; i++)
+   {
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket == 0) continue;
+      if((ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID) != positionId) continue;
+
+      long dealEntry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+      if(dealEntry == DEAL_ENTRY_IN || dealEntry == DEAL_ENTRY_INOUT)
+         return(HistoryDealGetDouble(dealTicket, DEAL_PRICE));
+   }
+   return(0.0);
 }
 
 string BuildTechnicalSummary()
@@ -223,25 +289,35 @@ string BuildStartupMessage()
 
 string BuildFormattedEntryMessage(const string side, const string mode, const double entryPrice, const double sl, const double tp1, const double tp2, const double tp3, const int digits)
 {
+   double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+   double slPips = PointsToPips(MathAbs(entryPrice - sl) / point);
+   double tp1Pips = PointsToPips(MathAbs(tp1 - entryPrice) / point);
+   double tp2Pips = PointsToPips(MathAbs(tp2 - entryPrice) / point);
+   double tp3Pips = PointsToPips(MathAbs(tp3 - entryPrice) / point);
+   double dailyPL = AccountInfoDouble(ACCOUNT_EQUITY) - startDayEquity;
+
    string message = "ENTRY OPENED" +
                     "\nBot: Reversal Limit TierReady" +
                     "\nType: " + side + " " + mode +
                     "\nSymbol: " + symbolName +
                     "\nLot Total: " + DoubleToString(LotSize, 2) +
                     "\nEntry: " + DoubleToString(entryPrice, digits) +
-                    "\nSL: " + DoubleToString(sl, digits) +
-                    "\nTP1: " + DoubleToString(tp1, digits);
+                    "\nSL: " + DoubleToString(sl, digits) + " (" + DoubleToString(slPips, 1) + " pips)" +
+                    "\nTP1: " + DoubleToString(tp1, digits) + " (" + DoubleToString(tp1Pips, 1) + " pips)";
 
    if(UseThreeOrderSplit)
-      message += "\nTP2: " + DoubleToString(tp2, digits) +
-                 "\nTP3: " + DoubleToString(tp3, digits);
+      message += "\nTP2: " + DoubleToString(tp2, digits) + " (" + DoubleToString(tp2Pips, 1) + " pips)" +
+                 "\nTP3: " + DoubleToString(tp3, digits) + " (" + DoubleToString(tp3Pips, 1) + " pips)";
+
+   message += "\nProfit hari ini: " + DoubleToString(dailyPL, 2);
 
    return(message);
 }
 
-string BuildCloseMessage(const string side, const double profitValue, const double closePrice, const double volume, const long reasonCode, const int digits)
+string BuildCloseMessage(const string side, const double profitValue, const double closePrice, const double volume, const long reasonCode, const int digits, const double closePips)
 {
    string outcome = profitValue >= 0.0 ? "CLOSE PROFIT" : "CLOSE LOSS";
+   double dailyPL = AccountInfoDouble(ACCOUNT_EQUITY) - startDayEquity;
    return(outcome +
           "\nBot: Reversal Limit TierReady" +
           "\nType: " + side +
@@ -249,6 +325,8 @@ string BuildCloseMessage(const string side, const double profitValue, const doub
           "\nVolume: " + DoubleToString(volume, 2) +
           "\nClose Price: " + DoubleToString(closePrice, digits) +
           "\nP/L: " + DoubleToString(profitValue, 2) +
+          "\nPips: " + DoubleToString(closePips, 1) +
+          "\nProfit hari ini: " + DoubleToString(dailyPL, 2) +
           "\nReason Code: " + IntegerToString((int)reasonCode));
 }
 
@@ -309,6 +387,12 @@ void OnTick()
    ShowPanel();
 
    if(IsDailyLimitReached()) return;
+
+   if(!IsMarketSessionOpen())
+   {
+      lastStatus = "Market closed, waiting open session";
+      return;
+   }
 
    int spread = (int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD);
    if(spread > MaxSpreadPoints)
@@ -967,11 +1051,13 @@ void ShowPanel()
 {
    double dailyPL = AccountInfoDouble(ACCOUNT_EQUITY) - startDayEquity;
    string tfLabel = EnumToString((ENUM_TIMEFRAMES)SignalTF);
+   string sessionLabel = IsMarketSessionOpen() ? "OPEN" : "CLOSED";
    Comment("BOT MetaTraderLocal Reversal Limit\n",
            "Symbol: ", symbolName, " | TF: ", tfLabel, "\n",
            "Positions: ", CountMyPositions(), " | Pending: ", CountMyPendingOrders(), "\n",
            "Daily P/L: ", DoubleToString(dailyPL, 2), "\n",
            "Lot: ", DoubleToString(LotSize, 2), " | Spread: ", IntegerToString((int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD)), "\n",
+           "Session: ", sessionLabel, "\n",
            "Mode: REVERSAL / LIMIT / NO GRID\n",
            "Status: ", lastStatus);
 }
@@ -1006,13 +1092,20 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
    double dealVolume = HistoryDealGetDouble(trans.deal, DEAL_VOLUME);
    long dealReason = HistoryDealGetInteger(trans.deal, DEAL_REASON);
    long dealType = HistoryDealGetInteger(trans.deal, DEAL_TYPE);
+    ulong positionId = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
    int digits = (int)SymbolInfoInteger(symbolName, SYMBOL_DIGITS);
+   double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
 
    string side = "SELL";
    if(dealType == DEAL_TYPE_BUY || dealType == DEAL_TYPE_BUY_CANCELED) side = "BUY";
 
+   double entryPrice = GetPositionEntryPriceFromHistory(positionId);
+   double closePips = 0.0;
+   if(entryPrice > 0.0 && point > 0.0)
+      closePips = PointsToPips(MathAbs(dealPrice - entryPrice) / point);
+
    lastNotifiedDealTicket = trans.deal;
-   SendTelegram(BuildCloseMessage(side, dealProfit, dealPrice, dealVolume, dealReason, digits));
+   SendTelegram(BuildCloseMessage(side, dealProfit, dealPrice, dealVolume, dealReason, digits, closePips));
 
    if(SendAccountTotalSummary)
       SendTelegram(BuildAccountTotalSummary());
