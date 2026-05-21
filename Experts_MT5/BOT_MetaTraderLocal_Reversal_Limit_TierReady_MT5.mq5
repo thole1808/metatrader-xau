@@ -11,7 +11,7 @@ CTrade trade;
 
 // ================= INPUT TRADING =================
 input string TradeSymbol              = "XAUUSDc";
-input double LotSize                  = 0.01;
+input double LotSize                  = 0.02;
 input int    MagicNumber              = 2026051912;
 input int    MaxSpreadPoints          = 300;
 input int    SlippagePoints           = 50;
@@ -43,10 +43,10 @@ input bool   RefreshStalePending      = true;
 
 input bool   UseTrailingStop          = true;
 input bool   UseAutoSLPlus            = true;
-input int    SLPlusTriggerPoints      = 120;
-input int    SLPlusLockPoints         = 50;
-input int    TrailStartPoints         = 180;
-input int    TrailStepPoints          = 80;
+input int    SLPlusTriggerPoints      = 260;
+input int    SLPlusLockPoints         = 220;
+input int    TrailStartPoints         = 340;
+input int    TrailStepPoints          = 140;
 
 input double DailyMaxLossMoney        = 150.0;
 input double DailyTargetMoney         = 300.0;
