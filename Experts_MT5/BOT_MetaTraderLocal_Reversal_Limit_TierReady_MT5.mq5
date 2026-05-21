@@ -59,6 +59,8 @@ input bool   EnableTelegram           = true;
 input string TelegramBotToken         = "8957713577:AAFBYCap7FHYKFuZWTPsPs76NPHo1XZb-3M";
 input string TelegramChatID           = "764887377";
 
+//TEST
+
 // ================= GLOBAL =================
 string symbolName;
 int trendEmaHandle = INVALID_HANDLE;
