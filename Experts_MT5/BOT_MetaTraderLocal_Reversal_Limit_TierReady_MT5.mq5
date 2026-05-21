@@ -17,6 +17,7 @@ input int    MaxSpreadPoints          = 300;
 input int    SlippagePoints           = 50;
 
 input ENUM_TIMEFRAMES TrendTF         = PERIOD_M15;
+input ENUM_TIMEFRAMES SignalTF        = PERIOD_M15;
 input int    TrendEMA                 = 34;
 
 input int    EntryEMA                 = 12;
@@ -28,8 +29,8 @@ input int    SignalLookbackBars       = 2;
 input bool   EnableTrendFallback      = true;
 input bool   UseMarketForTrendFallback = true;           // Keep trend-follow entries immediate; limit is for reversal mode
 input bool   RequireCandleConfirmation = true;
-input int    MinSignalBodyPoints      = 60;
-input double MaxOppositeWickRatio     = 1.20;
+input int    MinSignalBodyPoints      = 35;
+input double MaxOppositeWickRatio     = 1.80;
 
 input int    StopLossPoints           = 1000;
 input int    TakeProfitPoints         = 500;             // About 50 pips target per run
@@ -40,18 +41,22 @@ input int    PendingExpiryMinutes     = 2;
 input bool   FallbackMarketIfRejected = true;
 input bool   DeleteOppositePending    = true;
 input bool   RefreshStalePending      = true;
+input bool   UseThreeOrderSplit       = true;
+input double TP2Multiplier            = 1.50;
+input double TP3Multiplier            = 2.00;
 
 input bool   UseTrailingStop          = true;
 input bool   UseAutoSLPlus            = true;
-input int    SLPlusTriggerPoints      = 260;
-input int    SLPlusLockPoints         = 220;
-input int    TrailStartPoints         = 340;
-input int    TrailStepPoints          = 140;
+input int    SLPlusTriggerPoints      = 60;
+input int    SLPlusLockPoints         = 30;
+input int    TrailStartPoints         = 90;
+input int    TrailStepPoints          = 40;
 
 input double DailyMaxLossMoney        = 150.0;
 input double DailyTargetMoney         = 300.0;
 
 input bool   OneTradePerCandle        = false;
+input int    ReentryCooldownBars      = 1;
 
 // ================= REVERSAL MODE =================
 input bool   EnableReversalMode       = true;
@@ -61,6 +66,7 @@ input int    ReversalDelaySeconds     = 1;
 input bool   EnableTelegram           = true;
 input string TelegramBotToken         = "8957713577:AAFBYCap7FHYKFuZWTPsPs76NPHo1XZb-3M";
 input string TelegramChatID           = "764887377";
+input bool   SendAccountTotalSummary  = true;
 
 //TEST
 
@@ -80,6 +86,171 @@ string lastStatus = "Starting";
 datetime lastPendingRefreshTime = 0;
 int lastKnownPositionCount = 0;
 datetime lastReentryLogTime = 0;
+datetime lastIndicatorLogBarTime = 0;
+datetime lastPositionExitTime = 0;
+
+double lastTrendClose = 0.0;
+double lastTrendEMA = 0.0;
+double lastEntryEMA = 0.0;
+double lastRSI = 0.0;
+double lastOpen1 = 0.0;
+double lastClose1 = 0.0;
+double lastHigh1 = 0.0;
+double lastLow1 = 0.0;
+bool lastBuySignal = false;
+bool lastSellSignal = false;
+bool lastFallbackBuySignal = false;
+bool lastFallbackSellSignal = false;
+ulong lastNotifiedDealTicket = 0;
+
+double NormalizeLots(const double lots)
+{
+   double minLot = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MAX);
+   double stepLot = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_STEP);
+
+   if(stepLot <= 0.0) stepLot = 0.01;
+   double normalized = MathFloor(lots / stepLot) * stepLot;
+   if(normalized < minLot) normalized = minLot;
+   if(normalized > maxLot) normalized = maxLot;
+
+   int lotDigits = 2;
+   if(stepLot < 0.01) lotDigits = 3;
+   if(stepLot < 0.001) lotDigits = 4;
+   return(NormalizeDouble(normalized, lotDigits));
+}
+
+void LogIndicatorSnapshot(const datetime candleTime)
+{
+   if(candleTime == lastIndicatorLogBarTime) return;
+   lastIndicatorLogBarTime = candleTime;
+
+   int spread = (int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD);
+   string tfLabel = EnumToString((ENUM_TIMEFRAMES)SignalTF);
+   string signalLabel = "NONE";
+
+   if(lastBuySignal) signalLabel = "BUY_REV";
+   else if(lastSellSignal) signalLabel = "SELL_REV";
+   else if(lastFallbackBuySignal) signalLabel = "BUY_FALLBACK";
+   else if(lastFallbackSellSignal) signalLabel = "SELL_FALLBACK";
+
+   Print("[SignalLog] TF=", tfLabel,
+         " | Spread=", spread,
+         " | TrendClose=", DoubleToString(lastTrendClose, 2),
+         " | TrendEMA=", DoubleToString(lastTrendEMA, 2),
+         " | EntryEMA=", DoubleToString(lastEntryEMA, 2),
+         " | RSI=", DoubleToString(lastRSI, 2),
+         " | O=", DoubleToString(lastOpen1, 2),
+         " | H=", DoubleToString(lastHigh1, 2),
+         " | L=", DoubleToString(lastLow1, 2),
+         " | C=", DoubleToString(lastClose1, 2),
+         " | Signal=", signalLabel);
+}
+
+void GetAccountHistoryTotals(double &grossWin, double &grossLoss, double &netProfit, int &closedDeals)
+{
+   grossWin = 0.0;
+   grossLoss = 0.0;
+   netProfit = 0.0;
+   closedDeals = 0;
+
+   if(!HistorySelect(0, TimeCurrent())) return;
+
+   int totalDeals = HistoryDealsTotal();
+   for(int i = 0; i < totalDeals; i++)
+   {
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket == 0) continue;
+
+      long dealEntry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+      if(dealEntry != DEAL_ENTRY_OUT && dealEntry != DEAL_ENTRY_INOUT && dealEntry != DEAL_ENTRY_OUT_BY) continue;
+
+      double dealProfit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT) +
+                          HistoryDealGetDouble(dealTicket, DEAL_SWAP) +
+                          HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+
+      if(dealProfit > 0.0) grossWin += dealProfit;
+      if(dealProfit < 0.0) grossLoss += MathAbs(dealProfit);
+
+      netProfit += dealProfit;
+      closedDeals++;
+   }
+}
+
+string BuildAccountTotalSummary()
+{
+   double grossWin, grossLoss, netProfit;
+   int closedDeals;
+   GetAccountHistoryTotals(grossWin, grossLoss, netProfit, closedDeals);
+
+   double recoveryNeeded = 0.0;
+   if(netProfit < 0.0) recoveryNeeded = MathAbs(netProfit);
+
+   return("TOTAL ACCOUNT SUMMARY" +
+          "\nClosed deals: " + IntegerToString(closedDeals) +
+          "\nTotal menang: " + DoubleToString(grossWin, 2) +
+          "\nTotal rugi: " + DoubleToString(grossLoss, 2) +
+          "\nNet total: " + DoubleToString(netProfit, 2) +
+          "\nRecovery ke BE: " + DoubleToString(recoveryNeeded, 2));
+}
+
+string BuildTechnicalSummary()
+{
+   return("TECHNICAL SETUP" +
+          "\nTrend TF: " + EnumToString((ENUM_TIMEFRAMES)TrendTF) +
+          "\nSignal TF: " + EnumToString((ENUM_TIMEFRAMES)SignalTF) +
+          "\nTrend EMA: " + IntegerToString(TrendEMA) +
+          "\nEntry EMA: " + IntegerToString(EntryEMA) +
+          "\nRSI Period: " + IntegerToString(RSI_Period) +
+          "\nRSI Buy/Sell: " + DoubleToString(BuyRSILevel, 1) + " / " + DoubleToString(SellRSILevel, 1) +
+          "\nMode: Reversal + Limit + SL Plus + Trailing");
+}
+
+string BuildStartupMessage()
+{
+   string limitMode = UseLimitOrders ? "ON" : "OFF";
+   string splitMode = UseThreeOrderSplit ? "3 Orders" : "Single Order";
+
+   return("EA STARTED" +
+          "\nBot: Reversal Limit TierReady" +
+          "\nSymbol: " + symbolName +
+          "\nLot: " + DoubleToString(LotSize, 2) +
+          "\nLimit Orders: " + limitMode +
+          "\nExecution: " + splitMode +
+          "\nSL Plus Trigger/Lock: " + IntegerToString(SLPlusTriggerPoints) + " / " + IntegerToString(SLPlusLockPoints) +
+          "\nTrailing Start/Step: " + IntegerToString(TrailStartPoints) + " / " + IntegerToString(TrailStepPoints));
+}
+
+string BuildFormattedEntryMessage(const string side, const string mode, const double entryPrice, const double sl, const double tp1, const double tp2, const double tp3, const int digits)
+{
+   string message = "ENTRY OPENED" +
+                    "\nBot: Reversal Limit TierReady" +
+                    "\nType: " + side + " " + mode +
+                    "\nSymbol: " + symbolName +
+                    "\nLot Total: " + DoubleToString(LotSize, 2) +
+                    "\nEntry: " + DoubleToString(entryPrice, digits) +
+                    "\nSL: " + DoubleToString(sl, digits) +
+                    "\nTP1: " + DoubleToString(tp1, digits);
+
+   if(UseThreeOrderSplit)
+      message += "\nTP2: " + DoubleToString(tp2, digits) +
+                 "\nTP3: " + DoubleToString(tp3, digits);
+
+   return(message);
+}
+
+string BuildCloseMessage(const string side, const double profitValue, const double closePrice, const double volume, const long reasonCode, const int digits)
+{
+   string outcome = profitValue >= 0.0 ? "CLOSE PROFIT" : "CLOSE LOSS";
+   return(outcome +
+          "\nBot: Reversal Limit TierReady" +
+          "\nType: " + side +
+          "\nSymbol: " + symbolName +
+          "\nVolume: " + DoubleToString(volume, 2) +
+          "\nClose Price: " + DoubleToString(closePrice, digits) +
+          "\nP/L: " + DoubleToString(profitValue, 2) +
+          "\nReason Code: " + IntegerToString((int)reasonCode));
+}
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -98,8 +269,8 @@ int OnInit()
    trade.SetTypeFillingBySymbol(symbolName);
 
    trendEmaHandle = iMA(symbolName, TrendTF, TrendEMA, 0, MODE_EMA, PRICE_CLOSE);
-   entryEmaHandle = iMA(symbolName, _Period, EntryEMA, 0, MODE_EMA, PRICE_CLOSE);
-   rsiHandle = iRSI(symbolName, _Period, RSI_Period, PRICE_CLOSE);
+   entryEmaHandle = iMA(symbolName, SignalTF, EntryEMA, 0, MODE_EMA, PRICE_CLOSE);
+   rsiHandle = iRSI(symbolName, SignalTF, RSI_Period, PRICE_CLOSE);
 
    if(trendEmaHandle == INVALID_HANDLE || entryEmaHandle == INVALID_HANDLE || rsiHandle == INVALID_HANDLE)
    {
@@ -112,7 +283,10 @@ int OnInit()
    string limitOrdersLabel = "OFF";
    if(UseLimitOrders) limitOrdersLabel = "ON";
    LogStatus("BOT Reversal Limit active on " + symbolName + " | Lot: " + DoubleToString(LotSize, 2) + " | LimitOrders: " + limitOrdersLabel);
-   SendTelegram("BOT Reversal Limit ACTIVE\nSymbol: " + symbolName + "\nLot: " + DoubleToString(LotSize, 2) + "\nMode: REVERSAL / LIMIT / NO GRID / NO MARTINGALE");
+   SendTelegram(BuildStartupMessage());
+   SendTelegram(BuildTechnicalSummary());
+   if(SendAccountTotalSummary)
+      SendTelegram(BuildAccountTotalSummary());
 
    return INIT_SUCCEEDED;
 }
@@ -124,7 +298,7 @@ void OnDeinit(const int reason)
    if(entryEmaHandle != INVALID_HANDLE) IndicatorRelease(entryEmaHandle);
    if(rsiHandle != INVALID_HANDLE) IndicatorRelease(rsiHandle);
    Comment("");
-   SendTelegram("BOT Reversal Limit STOP on " + symbolName);
+   SendTelegram("EA STOPPED\nBot: Reversal Limit TierReady\nSymbol: " + symbolName);
 }
 
 //+------------------------------------------------------------------+
@@ -143,7 +317,7 @@ void OnTick()
       return;
    }
 
-   datetime candleTime = iTime(symbolName, _Period, 0);
+   datetime candleTime = iTime(symbolName, SignalTF, 0);
    if(OneTradePerCandle && candleTime == lastTradeCandleTime)
    {
       lastStatus = "One trade per candle guard";
@@ -158,15 +332,29 @@ void OnTick()
    bool fallbackSellSignal = false;
    if(EnableTrendFallback)
       GetTrendFallbackSignals(fallbackBuySignal, fallbackSellSignal);
+   lastFallbackBuySignal = fallbackBuySignal;
+   lastFallbackSellSignal = fallbackSellSignal;
+   LogIndicatorSnapshot(candleTime);
 
    int myPositions = CountMyPositions();
    int currentType = GetMyPositionType();
    if(lastKnownPositionCount > 0 && myPositions == 0)
    {
+      lastPositionExitTime = TimeCurrent();
       LogStatus("No open position detected. Waiting for next valid re-entry signal.");
       lastReentryLogTime = TimeCurrent();
    }
    lastKnownPositionCount = myPositions;
+
+   if(lastPositionExitTime != 0 && ReentryCooldownBars > 0)
+   {
+      int barsSinceExit = iBarShift(symbolName, SignalTF, lastPositionExitTime, false);
+      if(barsSinceExit >= 0 && barsSinceExit < ReentryCooldownBars)
+      {
+         lastStatus = "Re-entry cooldown active";
+         return;
+      }
+   }
 
    if(myPositions > 0)
    {
@@ -265,16 +453,25 @@ bool GetSignals(bool &buySignal, bool &sellSignal)
    if(CopyBuffer(rsiHandle, 0, 0, 3, rsi) <= 0) return false;
 
    double trendClose = iClose(symbolName, TrendTF, 1);
-   double close1 = iClose(symbolName, _Period, 1);
-   double open1 = iOpen(symbolName, _Period, 1);
-   double high1 = iHigh(symbolName, _Period, 1);
-   double low1 = iLow(symbolName, _Period, 1);
+   double close1 = iClose(symbolName, SignalTF, 1);
+   double open1 = iOpen(symbolName, SignalTF, 1);
+   double high1 = iHigh(symbolName, SignalTF, 1);
+   double low1 = iLow(symbolName, SignalTF, 1);
    int lookbackShift = MathMax(2, SignalLookbackBars);
-   double close2 = iClose(symbolName, _Period, lookbackShift);
-   double open2 = iOpen(symbolName, _Period, 2);
-   double high2 = iHigh(symbolName, _Period, 2);
-   double low2 = iLow(symbolName, _Period, 2);
+   double close2 = iClose(symbolName, SignalTF, lookbackShift);
+   double open2 = iOpen(symbolName, SignalTF, 2);
+   double high2 = iHigh(symbolName, SignalTF, 2);
+   double low2 = iLow(symbolName, SignalTF, 2);
    double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+
+   lastTrendClose = trendClose;
+   lastTrendEMA = trendEMA[0];
+   lastEntryEMA = entryEMA[0];
+   lastRSI = rsi[0];
+   lastOpen1 = open1;
+   lastClose1 = close1;
+   lastHigh1 = high1;
+   lastLow1 = low1;
 
    bool trendBuy = trendClose > trendEMA[0];
    bool trendSell = trendClose < trendEMA[0];
@@ -319,6 +516,9 @@ bool GetSignals(bool &buySignal, bool &sellSignal)
       sellSignal = sellSignal || (trendSell && close1 < entryEMA[1] && sellMomentum && priceImprovingSell && candleConfirmSell);
    }
 
+   lastBuySignal = buySignal;
+   lastSellSignal = sellSignal;
+
    return true;
 }
 
@@ -340,14 +540,14 @@ void GetTrendFallbackSignals(bool &buySignal, bool &sellSignal)
    if(CopyBuffer(entryEmaHandle, 0, 0, 2, entryEMA) <= 0) return;
    if(CopyBuffer(rsiHandle, 0, 0, 2, rsi) <= 0) return;
 
-   double close1 = iClose(symbolName, _Period, 1);
-   double open1 = iOpen(symbolName, _Period, 1);
-   double high1 = iHigh(symbolName, _Period, 1);
-   double low1 = iLow(symbolName, _Period, 1);
-   double close2 = iClose(symbolName, _Period, 2);
-   double open2 = iOpen(symbolName, _Period, 2);
-   double high2 = iHigh(symbolName, _Period, 2);
-   double low2 = iLow(symbolName, _Period, 2);
+   double close1 = iClose(symbolName, SignalTF, 1);
+   double open1 = iOpen(symbolName, SignalTF, 1);
+   double high1 = iHigh(symbolName, SignalTF, 1);
+   double low1 = iLow(symbolName, SignalTF, 1);
+   double close2 = iClose(symbolName, SignalTF, 2);
+   double open2 = iOpen(symbolName, SignalTF, 2);
+   double high2 = iHigh(symbolName, SignalTF, 2);
+   double low2 = iLow(symbolName, SignalTF, 2);
    double trendClose = iClose(symbolName, TrendTF, 1);
    double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
 
@@ -393,6 +593,29 @@ void NormalizeTradeLevels(const bool isBuy, const double entryPrice, double &sl,
 }
 
 //+------------------------------------------------------------------+
+bool PlaceSingleLimit(const bool isBuy, const double lots, const double entry, const double sl, const double tp, const datetime expiry, const string reason)
+{
+   if(isBuy)
+      return trade.BuyLimit(lots, entry, symbolName, sl, tp, ORDER_TIME_SPECIFIED, expiry, reason);
+   return trade.SellLimit(lots, entry, symbolName, sl, tp, ORDER_TIME_SPECIFIED, expiry, reason);
+}
+
+//+------------------------------------------------------------------+
+bool PlaceSingleMarket(const bool isBuy, const double lots, const double sl, const double tp, const string reason)
+{
+   if(isBuy)
+      return trade.Buy(lots, symbolName, 0.0, sl, tp, reason);
+   return trade.Sell(lots, symbolName, 0.0, sl, tp, reason);
+}
+
+//+------------------------------------------------------------------+
+void SendSplitEntrySummary(const string side, const string mode, const double sl, const double tp1, const double tp2, const double tp3, const int digits)
+{
+   double entryPrice = SymbolInfoDouble(symbolName, side == "BUY" ? SYMBOL_ASK : SYMBOL_BID);
+   SendTelegram(BuildFormattedEntryMessage(side, mode, entryPrice, sl, tp1, tp2, tp3, digits));
+}
+
+//+------------------------------------------------------------------+
 void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason)
 {
    // Limit entry tries to get a slightly better price than immediate market execution.
@@ -406,29 +629,50 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
 
    double entry = isBuy ? ask - offset : bid + offset;
    double sl = isBuy ? entry - StopLossPoints * point : entry + StopLossPoints * point;
-   double tp = isBuy ? entry + TakeProfitPoints * point : entry - TakeProfitPoints * point;
+   double tp1 = isBuy ? entry + TakeProfitPoints * point : entry - TakeProfitPoints * point;
+   double tp2 = isBuy ? entry + (TakeProfitPoints * TP2Multiplier) * point : entry - (TakeProfitPoints * TP2Multiplier) * point;
+   double tp3 = isBuy ? entry + (TakeProfitPoints * TP3Multiplier) * point : entry - (TakeProfitPoints * TP3Multiplier) * point;
 
    entry = NormalizeDouble(entry, digits);
-   NormalizeTradeLevels(isBuy, entry, sl, tp, digits);
+   NormalizeTradeLevels(isBuy, entry, sl, tp1, digits);
+   NormalizeTradeLevels(isBuy, entry, sl, tp2, digits);
+   NormalizeTradeLevels(isBuy, entry, sl, tp3, digits);
 
    bool result = false;
    string side = "SELL";
    if(isBuy) side = "BUY";
+   double splitLot1 = NormalizeLots(LotSize / 3.0);
+   double splitLot2 = NormalizeLots(LotSize / 3.0);
+   double splitLot3 = NormalizeLots(LotSize - splitLot1 - splitLot2);
+   if(splitLot3 <= 0.0) splitLot3 = splitLot2;
 
    if(UseLimitOrders)
    {
       datetime expiry = TimeCurrent() + PendingExpiryMinutes * 60;
-      if(isBuy)
-         result = trade.BuyLimit(LotSize, entry, symbolName, sl, tp, ORDER_TIME_SPECIFIED, expiry, reason);
+      if(UseThreeOrderSplit)
+      {
+         bool ok1 = PlaceSingleLimit(isBuy, splitLot1, entry, sl, tp1, expiry, reason + " TP1");
+         bool ok2 = PlaceSingleLimit(isBuy, splitLot2, entry, sl, tp2, expiry, reason + " TP2");
+         bool ok3 = PlaceSingleLimit(isBuy, splitLot3, entry, sl, tp3, expiry, reason + " TP3");
+         result = ok1 || ok2 || ok3;
+      }
       else
-         result = trade.SellLimit(LotSize, entry, symbolName, sl, tp, ORDER_TIME_SPECIFIED, expiry, reason);
+      {
+         if(isBuy)
+            result = trade.BuyLimit(LotSize, entry, symbolName, sl, tp1, ORDER_TIME_SPECIFIED, expiry, reason);
+         else
+            result = trade.SellLimit(LotSize, entry, symbolName, sl, tp1, ORDER_TIME_SPECIFIED, expiry, reason);
+      }
 
       if(result)
       {
          lastTradeCandleTime = candleTime;
          lastPendingRefreshTime = TimeCurrent();
-         LogStatus(side + " LIMIT placed | Entry: " + DoubleToString(entry, digits) + " | SL: " + DoubleToString(sl, digits) + " | TP: " + DoubleToString(tp, digits));
-         SendTelegram(side + " LIMIT PLACED\nSymbol: " + symbolName + "\nLot: " + DoubleToString(LotSize, 2) + "\nEntry: " + DoubleToString(entry, digits) + "\nSL: " + DoubleToString(sl, digits) + "\nTP: " + DoubleToString(tp, digits));
+         LogStatus(side + " LIMIT placed | Entry: " + DoubleToString(entry, digits) + " | SL: " + DoubleToString(sl, digits));
+         if(UseThreeOrderSplit)
+            SendSplitEntrySummary(side, "LIMIT SPLIT", sl, tp1, tp2, tp3, digits);
+         else
+            SendTelegram(BuildFormattedEntryMessage(side, "LIMIT", entry, sl, tp1, tp2, tp3, digits));
          return;
       }
 
@@ -454,19 +698,40 @@ void PlaceEntryMarket(const bool isBuy, const datetime candleTime, const string 
 
    double marketEntry = isBuy ? ask : bid;
    double marketSL = isBuy ? marketEntry - StopLossPoints * point : marketEntry + StopLossPoints * point;
-   double marketTP = isBuy ? marketEntry + TakeProfitPoints * point : marketEntry - TakeProfitPoints * point;
-   NormalizeTradeLevels(isBuy, marketEntry, marketSL, marketTP, digits);
+   double marketTP1 = isBuy ? marketEntry + TakeProfitPoints * point : marketEntry - TakeProfitPoints * point;
+   double marketTP2 = isBuy ? marketEntry + (TakeProfitPoints * TP2Multiplier) * point : marketEntry - (TakeProfitPoints * TP2Multiplier) * point;
+   double marketTP3 = isBuy ? marketEntry + (TakeProfitPoints * TP3Multiplier) * point : marketEntry - (TakeProfitPoints * TP3Multiplier) * point;
+   NormalizeTradeLevels(isBuy, marketEntry, marketSL, marketTP1, digits);
+   NormalizeTradeLevels(isBuy, marketEntry, marketSL, marketTP2, digits);
+   NormalizeTradeLevels(isBuy, marketEntry, marketSL, marketTP3, digits);
+   double splitLot1 = NormalizeLots(LotSize / 3.0);
+   double splitLot2 = NormalizeLots(LotSize / 3.0);
+   double splitLot3 = NormalizeLots(LotSize - splitLot1 - splitLot2);
+   if(splitLot3 <= 0.0) splitLot3 = splitLot2;
 
-   if(isBuy)
-      result = trade.Buy(LotSize, symbolName, 0.0, marketSL, marketTP, reason + " MARKET");
+   if(UseThreeOrderSplit)
+   {
+      bool ok1 = PlaceSingleMarket(isBuy, splitLot1, marketSL, marketTP1, reason + " TP1");
+      bool ok2 = PlaceSingleMarket(isBuy, splitLot2, marketSL, marketTP2, reason + " TP2");
+      bool ok3 = PlaceSingleMarket(isBuy, splitLot3, marketSL, marketTP3, reason + " TP3");
+      result = ok1 || ok2 || ok3;
+   }
    else
-      result = trade.Sell(LotSize, symbolName, 0.0, marketSL, marketTP, reason + " MARKET");
+   {
+      if(isBuy)
+         result = trade.Buy(LotSize, symbolName, 0.0, marketSL, marketTP1, reason + " MARKET");
+      else
+         result = trade.Sell(LotSize, symbolName, 0.0, marketSL, marketTP1, reason + " MARKET");
+   }
 
    if(result)
    {
       lastTradeCandleTime = candleTime;
-      LogStatus(side + " MARKET opened | SL: " + DoubleToString(marketSL, digits) + " | TP: " + DoubleToString(marketTP, digits));
-      SendTelegram(side + " MARKET OPEN\nSymbol: " + symbolName + "\nLot: " + DoubleToString(LotSize, 2) + "\nSL: " + DoubleToString(marketSL, digits) + "\nTP: " + DoubleToString(marketTP, digits));
+      LogStatus(side + " MARKET opened | SL: " + DoubleToString(marketSL, digits));
+      if(UseThreeOrderSplit)
+         SendSplitEntrySummary(side, "MARKET SPLIT", marketSL, marketTP1, marketTP2, marketTP3, digits);
+      else
+         SendTelegram(BuildFormattedEntryMessage(side, "MARKET", marketEntry, marketSL, marketTP1, marketTP2, marketTP3, digits));
    }
    else
    {
@@ -701,7 +966,7 @@ bool IsDailyLimitReached()
 void ShowPanel()
 {
    double dailyPL = AccountInfoDouble(ACCOUNT_EQUITY) - startDayEquity;
-   string tfLabel = EnumToString((ENUM_TIMEFRAMES)_Period);
+   string tfLabel = EnumToString((ENUM_TIMEFRAMES)SignalTF);
    Comment("BOT MetaTraderLocal Reversal Limit\n",
            "Symbol: ", symbolName, " | TF: ", tfLabel, "\n",
            "Positions: ", CountMyPositions(), " | Pending: ", CountMyPendingOrders(), "\n",
@@ -716,6 +981,41 @@ void LogStatus(const string message)
 {
    lastStatus = message;
    Print("[ReversalLimit] ", message);
+}
+
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest &request, const MqlTradeResult &result)
+{
+   if(!EnableTelegram) return;
+   if(trans.type != TRADE_TRANSACTION_DEAL_ADD) return;
+   if(trans.deal == 0 || trans.deal == lastNotifiedDealTicket) return;
+
+   if(!HistoryDealSelect(trans.deal)) return;
+
+   string dealSymbol = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
+   long dealMagic = HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
+   long dealEntry = HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+
+   if(dealSymbol != symbolName || dealMagic != MagicNumber) return;
+   if(dealEntry != DEAL_ENTRY_OUT && dealEntry != DEAL_ENTRY_INOUT && dealEntry != DEAL_ENTRY_OUT_BY) return;
+
+   double dealProfit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT) +
+                       HistoryDealGetDouble(trans.deal, DEAL_SWAP) +
+                       HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+   double dealPrice = HistoryDealGetDouble(trans.deal, DEAL_PRICE);
+   double dealVolume = HistoryDealGetDouble(trans.deal, DEAL_VOLUME);
+   long dealReason = HistoryDealGetInteger(trans.deal, DEAL_REASON);
+   long dealType = HistoryDealGetInteger(trans.deal, DEAL_TYPE);
+   int digits = (int)SymbolInfoInteger(symbolName, SYMBOL_DIGITS);
+
+   string side = "SELL";
+   if(dealType == DEAL_TYPE_BUY || dealType == DEAL_TYPE_BUY_CANCELED) side = "BUY";
+
+   lastNotifiedDealTicket = trans.deal;
+   SendTelegram(BuildCloseMessage(side, dealProfit, dealPrice, dealVolume, dealReason, digits));
+
+   if(SendAccountTotalSummary)
+      SendTelegram(BuildAccountTotalSummary());
 }
 
 //+------------------------------------------------------------------+

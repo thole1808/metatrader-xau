@@ -1,137 +1,185 @@
-# XAUUSD ProRisk EA untuk MetaTrader
+# XAU MetaTrader Bots
 
-EA ini dibuat untuk XAUUSD dengan pendekatan trend-following konservatif:
+Kumpulan EA MetaTrader untuk `XAUUSD/XAUUSDc` yang dipakai untuk akun cent dan eksperimen entry reversal, limit order, profit lock, dan Telegram monitoring.
 
-- EMA 50/200 sebagai filter trend.
-- RSI sebagai sinyal pullback/re-entry.
-- ATR untuk Stop Loss, Take Profit, dan trailing stop.
-- Risk per trade default `0.50%` dari balance.
-- Daily loss guard default `3%` agar EA berhenti membuka posisi baru saat hari sedang buruk.
+Penting:
 
-Penting: tidak ada bot yang bisa menjamin profit. Jalankan di akun demo dan backtest dulu sebelum live.
+- Tidak ada EA yang bisa menjamin profit.
+- Selalu test di demo/backtest dulu.
+- XAU sangat sensitif terhadap spread, slippage, dan news.
 
-## File EA
+## File Utama
 
 - MT4: `Experts/XAUUSD_ProRisk_EA.mq4`
-- MT5: `Experts_MT5/XAUUSD_ProRisk_Scalper_MT5.mq5`
-- MT5 24 jam + tiered profit lock: `Experts_MT5/XAUUSDc_ProRisk_24H_TierLock_MT5.mq5`
+- MT4 companion untuk VPS/terminal MT4: `Experts/BOT_MetaTraderLocal_Reversal_Limit_TierReady_MT4.mq4`
+- MT5 scalper awal: `Experts_MT5/XAUUSD_ProRisk_Scalper_MT5.mq5`
+- MT5 24 jam tier lock: `Experts_MT5/XAUUSDc_ProRisk_24H_TierLock_MT5.mq5`
+- MT5 reversal limit aktif: `Experts_MT5/BOT_MetaTraderLocal_Reversal_Limit_TierReady_MT5.mq5`
 
-## Cara pasang di MT5 Desktop
+## EA Aktif Sekarang
 
-1. Buka MetaTrader 5.
-2. Klik `File > Open Data Folder`.
-3. Masuk ke `MQL5/Experts`.
-4. Masukkan file `Experts_MT5/XAUUSD_ProRisk_Scalper_MT5.mq5` ke folder tersebut.
-5. Buka MetaEditor, compile file `.mq5`, lalu pastikan tidak ada error.
-6. Restart MT5 atau klik kanan `Expert Advisors` di Navigator lalu `Refresh`.
-7. Buka chart `XAUUSD`, disarankan timeframe `M5`.
-8. Drag EA `XAUUSD_ProRisk_Scalper_MT5` ke chart.
-9. Aktifkan `Algo Trading` dan centang izin live trading pada EA.
+File:
 
-## Cara pasang di MT4 Desktop
+- `Experts_MT5/BOT_MetaTraderLocal_Reversal_Limit_TierReady_MT5.mq5`
 
-1. Buka MetaTrader 4.
-2. Klik `File > Open Data Folder`.
-3. Masuk ke `MQL4/Experts`.
-4. Masukkan file `Experts/XAUUSD_ProRisk_EA.mq4` ke folder tersebut.
-5. Restart MT4 atau klik kanan `Expert Advisors` di Navigator lalu `Refresh`.
-6. Buka chart `XAUUSD`, disarankan timeframe `M15` atau `H1`.
-7. Drag EA `XAUUSD_ProRisk_EA` ke chart.
-8. Aktifkan `Allow live trading` dan tombol `AutoTrading`.
+Karakter utamanya:
 
-## Setting awal untuk saldo 1091.61 cent
+- Fokus `reversal limit`
+- Bisa pakai `trend fallback`
+- Punya `SignalTF` tetap, jadi chart boleh dipindah timeframe tanpa mengubah logika sinyal
+- Bisa `split 3 order`
+- `TP` bertingkat
+- `SL Plus` untuk lock profit
+- `Trailing stop`
+- `Daily target/loss guard`
+- `Cooldown` setelah posisi close
+- Log indikator ke tab `Experts`
+- Telegram notifikasi
 
-Jika akun Anda akun cent, balance `1091.61 cent` kira-kira setara `10.9161 USD`. Gunakan risiko kecil dulu:
+## Inti Fungsi EA Aktif
 
-- `InpUseFixedLot`: `true` untuk MT5
-- `InpFixedLot`: `0.01` untuk MT5
-- `InpRiskPercent`: `0.25` sampai `0.35` untuk scalping MT5
-- `InpMaxDailyLossPercent`: `2.00` sampai `3.00`
-- `InpEquityStopPercent`: `5.00` sampai `6.00` untuk MT5
-- `InpMaxSpreadPoints`: sesuaikan broker, mulai dari `80`
-- `InpTradeSymbol`: default MT5 sudah `XAUUSDc`; ubah hanya jika nama simbol di broker Anda berbeda
+1. Baca trend pakai `TrendEMA` pada `TrendTF`
+2. Baca sinyal entry pakai candle, `EntryEMA`, dan `RSI` pada `SignalTF`
+3. Validasi candle agar tidak asal entry
+4. Entry reversal pakai `limit order` bila cocok
+5. Fallback ke `market order` bila perlu
+6. Pecah entry ke `3 order` dengan `TP` bertingkat
+7. Geser `SL` ke profit pakai `SL Plus`
+8. Lanjut kunci profit pakai `trailing`
 
-Catatan: jika `InpUseFixedLot = true`, EA akan memakai `InpFixedLot` dan mengabaikan hitungan `InpRiskPercent`.
+## Input Penting EA Aktif
 
-## Fitur MT5 Scalping
+- `TradeSymbol`
+- `LotSize`
+- `TrendTF`
+- `SignalTF`
+- `TrendEMA`
+- `EntryEMA`
+- `RSI_Period`
+- `BuyRSILevel`
+- `SellRSILevel`
+- `UseLimitOrders`
+- `UseThreeOrderSplit`
+- `TakeProfitPoints`
+- `SLPlusTriggerPoints`
+- `SLPlusLockPoints`
+- `TrailStartPoints`
+- `TrailStepPoints`
+- `DailyMaxLossMoney`
+- `DailyTargetMoney`
+- `ReentryCooldownBars`
 
-Versi MT5 memakai teknikal scalping:
+## TP Bertingkat
 
-- Timeframe sinyal default `M5`.
-- EMA 20/100 sebagai filter trend cepat.
-- RSI untuk konfirmasi momentum pullback.
-- Stochastic untuk timing entry scalping.
-- ATR untuk SL dan TP wajib.
-- Break-even otomatis untuk mengunci profit.
-- Trailing stop ATR setelah posisi bergerak profit.
-- Daily loss guard untuk menghentikan entry baru.
-- Equity stop guard untuk menutup posisi EA jika drawdown harian terlalu besar.
-- Spread guard supaya EA tidak entry saat spread XAUUSD melebar.
-- Telegram heartbeat default setiap `60` menit untuk pantau EA masih running.
+Kalau `UseThreeOrderSplit = true`, satu sinyal bisa dibagi jadi 3 order:
 
-Catatan: `SL Profit` di EA berarti saat posisi sudah bergerak profit, EA akan memindahkan Stop Loss ke area profit kecil sesuai `InpBreakEvenAtR` dan `InpLockProfitR`.
+- `TP1 = TakeProfitPoints`
+- `TP2 = TP2Multiplier x TakeProfitPoints`
+- `TP3 = TP3Multiplier x TakeProfitPoints`
 
-## Versi MT5 24 Jam TierLock
+Contoh:
 
-File `Experts_MT5/XAUUSDc_ProRisk_24H_TierLock_MT5.mq5` dibuat terpisah dengan default:
+- `TakeProfitPoints = 500`
+- `TP2Multiplier = 1.50`
+- `TP3Multiplier = 2.00`
 
-- `InpUseTradingHours`: `false`, jadi EA boleh mencari entry 24 jam selama market broker buka.
-- `InpFixedLot`: `0.01`.
-- `InpTradeSymbol`: `XAUUSDc`.
-- `InpUseTieredProfitLock`: `true`.
+Maka:
 
-Tiered profit lock bukan partial close. Karena lot `0.01` biasanya tidak bisa dipecah, EA mengunci SL bertingkat saat profit naik:
+- TP1 = `500`
+- TP2 = `750`
+- TP3 = `1000`
 
-- Tier 1: profit `1.00R`, SL dikunci `0.20R`.
-- Tier 2: profit `1.50R`, SL dikunci `0.75R`.
-- Tier 3: profit `2.00R`, SL dikunci `1.25R`.
-- Tier 4: profit `2.50R`, SL dikunci `1.75R`.
-- Tier 5: profit `3.00R`, SL dikunci `2.25R`.
-- Tier 6: profit `4.00R`, SL dikunci `3.00R`.
+## SL Plus Dan Trailing
 
-## Kirim notifikasi ke Telegram
+Tujuannya:
 
-EA ini bisa kirim pesan Telegram saat:
+- posisi hijau jangan mudah balik merah
+- profit kecil cepat diamankan
+- posisi runner tetap punya peluang jalan lebih jauh
 
-- EA mulai berjalan.
-- Order BUY/SELL berhasil dibuka.
-- Order gagal dibuka.
-- Daily loss guard aktif.
-- Trailing stop berhasil diperbarui.
+Urutannya:
 
-Cara setting:
+1. Posisi profit sampai `SLPlusTriggerPoints`
+2. `SL` dipindah ke area plus sebesar `SLPlusLockPoints`
+3. Setelah profit makin jauh, `trailing` lanjut mengunci
 
-1. Buat bot lewat Telegram `@BotFather`, lalu ambil `Bot Token`.
-2. Ambil `chat_id` Telegram Anda. Cara paling mudah: kirim pesan ke bot Anda, lalu buka di browser:
+## Log Di Experts
 
-   ```text
-   https://api.telegram.org/botTOKEN_BOT_ANDA/getUpdates
-   ```
+EA aktif sekarang menulis log ke tab `Experts` seperti:
 
-   Cari bagian `"chat":{"id":...}`.
+- status EA
+- sinyal buy/sell
+- snapshot indikator
+- nilai `RSI`
+- nilai EMA
+- candle `O/H/L/C`
+- status re-entry cooldown
+- status pending order
 
-3. Di MT4/MT5 buka `Tools > Options > Expert Advisors`.
-4. Centang `Allow WebRequest for listed URL`.
-5. Tambahkan URL:
+Contoh log:
 
-   ```text
-   https://api.telegram.org
-   ```
+```text
+[SignalLog] TF=PERIOD_M15 | Spread=... | TrendClose=... | TrendEMA=... | EntryEMA=... | RSI=... | O=... | H=... | L=... | C=... | Signal=BUY_REV
+```
 
-6. Saat memasang EA ke chart, isi input:
+## Rekap Total Account Ke Telegram
 
-- `InpUseTelegram`: `true`
-- `InpTelegramBotToken`: token dari `@BotFather`, isi lewat input EA saat pasang di chart
-- `InpTelegramChatId`: chat_id Anda, isi lewat input EA saat pasang di chart
-- `InpStatusEveryMinutes`: `60` untuk laporan status berkala di MT5
+EA aktif sekarang bisa kirim rekap total history account saat startup.
 
-## Rekomendasi pemakaian
+Input:
 
-- Mulai dari demo minimal 1-2 minggu.
-- Hindari news besar seperti NFP, CPI, FOMC jika spread broker melebar.
-- Jangan naikkan risk hanya karena beberapa trade profit.
-- Backtest MT5 scalping di `M5`, lalu bandingkan `M15`.
+- `SendAccountTotalSummary = true`
 
-## Catatan risiko
+Yang dikirim:
 
-Tidak ada EA yang bisa menjamin profit. Untuk XAUUSD, scalping sangat sensitif terhadap spread, slippage, news, dan server broker. Jalankan di demo/backtest dulu sebelum live.
+- total closed deals
+- total menang
+- total rugi
+- net total
+- sisa recovery ke break-even
+
+Catatan:
+
+- data diambil dari history yang tersedia di terminal MT5
+- rekap ini bersifat account-wide, bukan cuma trade EA ini
+
+## Telegram
+
+Setting Telegram:
+
+1. Buat bot di `@BotFather`
+2. Ambil `Bot Token`
+3. Ambil `chat_id`
+4. Di MT5 buka `Tools > Options > Expert Advisors`
+5. Centang `Allow WebRequest for listed URL`
+6. Tambahkan:
+
+```text
+https://api.telegram.org
+```
+
+Input yang dipakai:
+
+- `EnableTelegram = true`
+- `TelegramBotToken = ...`
+- `TelegramChatID = ...`
+
+## Workflow Mac + MT5
+
+Source utama dikerjakan dari project ini:
+
+- `/Users/achmadagus/Documents/Project/scipt-xau-metatrader`
+
+File MT5 di folder `Experts/Advisors` sudah dihubungkan ke source project, jadi alurnya:
+
+1. Edit source di project ini
+2. Save
+3. Compile di MetaEditor
+4. MT5 pakai versi terbaru
+
+## Catatan Risiko
+
+- Lot lebih besar = drawdown lebih cepat
+- `SL Plus` yang terlalu cepat akan sering mengunci profit kecil
+- `M15` lebih sabar daripada `M5`
+- Jangan paksa entry ramai kalau market sedang choppy dan jelek
