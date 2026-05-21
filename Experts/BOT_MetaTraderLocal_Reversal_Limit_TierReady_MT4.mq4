@@ -171,14 +171,20 @@ string BuildTechnicalSummary()
 
 string BuildStartupMessage()
 {
-   return("EA STARTED" +
+   string message = "EA STARTED" +
           "\nBot: Reversal Limit TierReady MT4" +
           "\nSymbol: " + g_symbol +
           "\nLot: " + DoubleToString(InpLotSize, 2) +
           "\nLimit Orders: " + (InpUseLimitOrders ? "ON" : "OFF") +
           "\nExecution: " + (InpUseThreeOrderSplit ? "3 Orders" : "Single Order") +
           "\nSL Plus Trigger/Lock: " + IntegerToString(InpSLPlusTriggerPoints) + " / " + IntegerToString(InpSLPlusLockPoints) +
-          "\nTrailing Start/Step: " + IntegerToString(InpTrailStartPoints) + " / " + IntegerToString(InpTrailStepPoints));
+          "\nTrailing Start/Step: " + IntegerToString(InpTrailStartPoints) + " / " + IntegerToString(InpTrailStepPoints) +
+          "\n\n" + BuildTechnicalSummary();
+
+   if(InpSendAccountTotalSummary)
+      message += "\n\n" + BuildAccountTotalSummary();
+
+   return(message);
 }
 
 string BuildFormattedEntryMessage(string side, string mode, double entryPrice, double sl, double tp1, double tp2, double tp3, int digits)
@@ -203,7 +209,7 @@ string BuildFormattedEntryMessage(string side, string mode, double entryPrice, d
 
 string BuildCloseMessage(string side, double closePrice, double volume, double profitValue, double closePips)
 {
-   return((profitValue >= 0.0 ? "CLOSE PROFIT" : "CLOSE LOSS") +
+   string message = (profitValue >= 0.0 ? "CLOSE PROFIT" : "CLOSE LOSS") +
           "\nBot: Reversal Limit TierReady MT4" +
           "\nType: " + side +
           "\nSymbol: " + g_symbol +
@@ -211,7 +217,12 @@ string BuildCloseMessage(string side, double closePrice, double volume, double p
           "\nClose Price: " + DoubleToString(closePrice, Digits) +
           "\nP/L: " + DoubleToString(profitValue, 2) +
           "\nPips: " + DoubleToString(closePips, 1) +
-          "\nProfit hari ini: " + DoubleToString(GetDailyPL(), 2));
+          "\nProfit hari ini: " + DoubleToString(GetDailyPL(), 2);
+
+   if(InpSendAccountTotalSummary)
+      message += "\n\n" + BuildAccountTotalSummary();
+
+   return(message);
 }
 
 int OnInit()
@@ -222,8 +233,6 @@ int OnInit()
 
    ResetDailyEquity();
    SendTelegramMessage(BuildStartupMessage());
-   SendTelegramMessage(BuildTechnicalSummary());
-   if(InpSendAccountTotalSummary) SendTelegramMessage(BuildAccountTotalSummary());
    return(INIT_SUCCEEDED);
 }
 
@@ -693,7 +702,6 @@ void NotifyClosedTrades()
       string side = OrderType() == OP_BUY ? "BUY" : "SELL";
 
       SendTelegramMessage(BuildCloseMessage(side, closePrice, OrderLots(), pl, closePips));
-      if(InpSendAccountTotalSummary) SendTelegramMessage(BuildAccountTotalSummary());
       return;
    }
 }

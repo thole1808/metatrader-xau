@@ -276,15 +276,20 @@ string BuildStartupMessage()
 {
    string limitMode = UseLimitOrders ? "ON" : "OFF";
    string splitMode = UseThreeOrderSplit ? "3 Orders" : "Single Order";
-
-   return("EA STARTED" +
+   string message = "EA STARTED" +
           "\nBot: Reversal Limit TierReady" +
           "\nSymbol: " + symbolName +
           "\nLot: " + DoubleToString(LotSize, 2) +
           "\nLimit Orders: " + limitMode +
           "\nExecution: " + splitMode +
           "\nSL Plus Trigger/Lock: " + IntegerToString(SLPlusTriggerPoints) + " / " + IntegerToString(SLPlusLockPoints) +
-          "\nTrailing Start/Step: " + IntegerToString(TrailStartPoints) + " / " + IntegerToString(TrailStepPoints));
+          "\nTrailing Start/Step: " + IntegerToString(TrailStartPoints) + " / " + IntegerToString(TrailStepPoints) +
+          "\n\n" + BuildTechnicalSummary();
+
+   if(SendAccountTotalSummary)
+      message += "\n\n" + BuildAccountTotalSummary();
+
+   return(message);
 }
 
 string BuildFormattedEntryMessage(const string side, const string mode, const double entryPrice, const double sl, const double tp1, const double tp2, const double tp3, const int digits)
@@ -318,7 +323,7 @@ string BuildCloseMessage(const string side, const double profitValue, const doub
 {
    string outcome = profitValue >= 0.0 ? "CLOSE PROFIT" : "CLOSE LOSS";
    double dailyPL = AccountInfoDouble(ACCOUNT_EQUITY) - startDayEquity;
-   return(outcome +
+   string message = outcome +
           "\nBot: Reversal Limit TierReady" +
           "\nType: " + side +
           "\nSymbol: " + symbolName +
@@ -327,7 +332,12 @@ string BuildCloseMessage(const string side, const double profitValue, const doub
           "\nP/L: " + DoubleToString(profitValue, 2) +
           "\nPips: " + DoubleToString(closePips, 1) +
           "\nProfit hari ini: " + DoubleToString(dailyPL, 2) +
-          "\nReason Code: " + IntegerToString((int)reasonCode));
+          "\nReason Code: " + IntegerToString((int)reasonCode);
+
+   if(SendAccountTotalSummary)
+      message += "\n\n" + BuildAccountTotalSummary();
+
+   return(message);
 }
 
 //+------------------------------------------------------------------+
@@ -362,9 +372,6 @@ int OnInit()
    if(UseLimitOrders) limitOrdersLabel = "ON";
    LogStatus("BOT Reversal Limit active on " + symbolName + " | Lot: " + DoubleToString(LotSize, 2) + " | LimitOrders: " + limitOrdersLabel);
    SendTelegram(BuildStartupMessage());
-   SendTelegram(BuildTechnicalSummary());
-   if(SendAccountTotalSummary)
-      SendTelegram(BuildAccountTotalSummary());
 
    return INIT_SUCCEEDED;
 }
@@ -1106,9 +1113,6 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
 
    lastNotifiedDealTicket = trans.deal;
    SendTelegram(BuildCloseMessage(side, dealProfit, dealPrice, dealVolume, dealReason, digits, closePips));
-
-   if(SendAccountTotalSummary)
-      SendTelegram(BuildAccountTotalSummary());
 }
 
 //+------------------------------------------------------------------+
