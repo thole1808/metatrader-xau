@@ -303,6 +303,32 @@ void GetTrendFallbackSignals(bool &buySignal, bool &sellSignal)
 }
 
 //+------------------------------------------------------------------+
+void NormalizeTradeLevels(const bool isBuy, const double entryPrice, double &sl, double &tp, const int digits)
+{
+   double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+   int stopsLevel = (int)SymbolInfoInteger(symbolName, SYMBOL_TRADE_STOPS_LEVEL);
+   double minDistance = (stopsLevel + 5) * point;
+
+   if(isBuy)
+   {
+      if(entryPrice - sl < minDistance) sl = entryPrice - minDistance;
+      if(tp - entryPrice < minDistance) tp = entryPrice + minDistance;
+      if(sl >= entryPrice) sl = entryPrice - minDistance;
+      if(tp <= entryPrice) tp = entryPrice + minDistance;
+   }
+   else
+   {
+      if(sl - entryPrice < minDistance) sl = entryPrice + minDistance;
+      if(entryPrice - tp < minDistance) tp = entryPrice - minDistance;
+      if(sl <= entryPrice) sl = entryPrice + minDistance;
+      if(tp >= entryPrice) tp = entryPrice - minDistance;
+   }
+
+   sl = NormalizeDouble(sl, digits);
+   tp = NormalizeDouble(tp, digits);
+}
+
+//+------------------------------------------------------------------+
 void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason)
 {
    // Limit entry tries to get a slightly better price than immediate market execution.
@@ -319,8 +345,7 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
    double tp = isBuy ? entry + TakeProfitPoints * point : entry - TakeProfitPoints * point;
 
    entry = NormalizeDouble(entry, digits);
-   sl = NormalizeDouble(sl, digits);
-   tp = NormalizeDouble(tp, digits);
+   NormalizeTradeLevels(isBuy, entry, sl, tp, digits);
 
    bool result = false;
    string side = "SELL";
@@ -366,8 +391,7 @@ void PlaceEntryMarket(const bool isBuy, const datetime candleTime, const string 
    double marketEntry = isBuy ? ask : bid;
    double marketSL = isBuy ? marketEntry - StopLossPoints * point : marketEntry + StopLossPoints * point;
    double marketTP = isBuy ? marketEntry + TakeProfitPoints * point : marketEntry - TakeProfitPoints * point;
-   marketSL = NormalizeDouble(marketSL, digits);
-   marketTP = NormalizeDouble(marketTP, digits);
+   NormalizeTradeLevels(isBuy, marketEntry, marketSL, marketTP, digits);
 
    if(isBuy)
       result = trade.Buy(LotSize, symbolName, 0.0, marketSL, marketTP, reason + " MARKET");
