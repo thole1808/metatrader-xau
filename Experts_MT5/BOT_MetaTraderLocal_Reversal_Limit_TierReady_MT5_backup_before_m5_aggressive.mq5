@@ -28,7 +28,7 @@ input bool   UseFastEntryMode         = true;
 input int    SignalLookbackBars       = 2;
 input bool   EnableTrendFallback      = true;
 input bool   UseMarketForTrendFallback = true;           // Keep trend-follow entries immediate; limit is for reversal mode
-input bool   RequireCandleConfirmation = false;
+input bool   RequireCandleConfirmation = true;
 input int    MinSignalBodyPoints      = 35;
 input double MaxOppositeWickRatio     = 1.80;
 
