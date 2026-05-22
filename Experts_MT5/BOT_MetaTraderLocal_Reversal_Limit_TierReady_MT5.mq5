@@ -17,7 +17,7 @@ input int    MaxSpreadPoints          = 600;
 input int    SlippagePoints           = 50;
 
 input ENUM_TIMEFRAMES TrendTF         = PERIOD_M15;
-input ENUM_TIMEFRAMES SignalTF        = PERIOD_M5;
+input ENUM_TIMEFRAMES SignalTF        = PERIOD_M15;
 input int    TrendEMA                 = 34;
 
 input int    EntryEMA                 = 12;
@@ -28,7 +28,7 @@ input bool   UseFastEntryMode         = true;
 input int    SignalLookbackBars       = 2;
 input bool   EnableTrendFallback      = true;
 input bool   UseMarketForTrendFallback = true;           // Keep trend-follow entries immediate; limit is for reversal mode
-input bool   RequireCandleConfirmation = false;
+input bool   RequireCandleConfirmation = true;
 input int    MinSignalBodyPoints      = 35;
 input double MaxOppositeWickRatio     = 1.80;
 
@@ -36,8 +36,8 @@ input int    StopLossPoints           = 1000;
 input int    TakeProfitPoints         = 500;             // About 50 pips target per run
 
 input bool   UseLimitOrders           = true;
-input int    LimitOffsetPoints        = 80;
-input int    SplitLimitEntryStepPoints = 100;
+input int    LimitOffsetPoints        = 40;
+input int    SplitLimitEntryStepPoints = 60;
 input int    PendingExpiryMinutes     = 2;
 input bool   FallbackMarketIfRejected = true;
 input bool   DeleteOppositePending    = true;
