@@ -36,8 +36,8 @@ input int    StopLossPoints           = 1000;
 input int    TakeProfitPoints         = 500;             // About 50 pips target per run
 
 input bool   UseLimitOrders           = true;
-input int    LimitOffsetPoints        = 40;
-input int    SplitLimitEntryStepPoints = 60;
+input int    LimitOffsetPoints        = 80;
+input int    SplitLimitEntryStepPoints = 100;
 input int    PendingExpiryMinutes     = 2;
 input bool   FallbackMarketIfRejected = true;
 input bool   DeleteOppositePending    = true;
