@@ -13,7 +13,7 @@ CTrade trade;
 input string TradeSymbol              = "XAUUSDc";
 input double LotSize                  = 0.03;
 input int    MagicNumber              = 2026051912;
-input int    MaxSpreadPoints          = 600;
+input int    MaxSpreadPoints          = 300;
 input int    SlippagePoints           = 50;
 
 input ENUM_TIMEFRAMES TrendTF         = PERIOD_M15;
@@ -37,7 +37,6 @@ input int    TakeProfitPoints         = 500;             // About 50 pips target
 
 input bool   UseLimitOrders           = true;
 input int    LimitOffsetPoints        = 40;
-input int    SplitLimitEntryStepPoints = 40;
 input int    PendingExpiryMinutes     = 2;
 input bool   FallbackMarketIfRejected = true;
 input bool   DeleteOppositePending    = true;
@@ -55,7 +54,7 @@ input int    TrailStepPoints          = 40;
 
 input double DailyMaxLossMoney        = 150.0;
 input double DailyTargetMoney         = 1000.0;
-input int    MaxDailyLosingDeals      = 0;
+input int    MaxDailyLosingDeals      = 6;
 
 input bool   OneTradePerCandle        = false;
 input int    ReentryCooldownBars      = 1;
@@ -106,7 +105,6 @@ bool lastSellSignal = false;
 bool lastFallbackBuySignal = false;
 bool lastFallbackSellSignal = false;
 ulong lastNotifiedDealTicket = 0;
-string lastSignalDecisionLog = "";
 
 double NormalizeLots(const double lots)
 {
@@ -150,9 +148,6 @@ void LogIndicatorSnapshot(const datetime candleTime)
          " | L=", DoubleToString(lastLow1, 2),
          " | C=", DoubleToString(lastClose1, 2),
          " | Signal=", signalLabel);
-
-   if(lastSignalDecisionLog != "")
-      Print("[SignalCheck] ", lastSignalDecisionLog);
 }
 
 void GetAccountHistoryTotals(double &grossWin, double &grossLoss, double &netProfit, int &closedDeals)
@@ -661,13 +656,8 @@ bool GetSignals(bool &buySignal, bool &sellSignal)
                           lowerWick1 <= body1 * MaxOppositeWickRatio;
    }
 
-   bool rsiBuyPass = rsi[0] >= BuyRSILevel;
-   bool rsiSellPass = rsi[0] <= SellRSILevel;
-   bool entryBuyPass = close1 > entryEMA[0];
-   bool entrySellPass = close1 < entryEMA[0];
-
-   buySignal = trendBuy && entryBuyPass && candleConfirmBuy && rsiBuyPass;
-   sellSignal = trendSell && entrySellPass && candleConfirmSell && rsiSellPass;
+   buySignal = trendBuy && close1 > entryEMA[0] && candleConfirmBuy && rsi[0] >= BuyRSILevel;
+   sellSignal = trendSell && close1 < entryEMA[0] && candleConfirmSell && rsi[0] <= SellRSILevel;
 
    if(UseFastEntryMode)
    {
@@ -680,32 +670,6 @@ bool GetSignals(bool &buySignal, bool &sellSignal)
 
    lastBuySignal = buySignal;
    lastSellSignal = sellSignal;
-   lastSignalDecisionLog =
-      "BUY[trend=" + (trendBuy ? "PASS" : "BLOCK") +
-      " tc=" + DoubleToString(trendClose, 2) +
-      " ema=" + DoubleToString(trendEMA[0], 2) +
-      ", entryEMA=" + (entryBuyPass ? "PASS" : "BLOCK") +
-      " c=" + DoubleToString(close1, 2) +
-      " e=" + DoubleToString(entryEMA[0], 2) +
-      ", candle=" + (candleConfirmBuy ? "PASS" : "BLOCK") +
-      " body=" + DoubleToString(body1 / point, 1) +
-      " min=" + IntegerToString(MinSignalBodyPoints) +
-      ", rsi=" + (rsiBuyPass ? "PASS" : "BLOCK") +
-      " v=" + DoubleToString(rsi[0], 2) +
-      " min=" + DoubleToString(BuyRSILevel, 1) +
-      "] SELL[trend=" + (trendSell ? "PASS" : "BLOCK") +
-      " tc=" + DoubleToString(trendClose, 2) +
-      " ema=" + DoubleToString(trendEMA[0], 2) +
-      ", entryEMA=" + (entrySellPass ? "PASS" : "BLOCK") +
-      " c=" + DoubleToString(close1, 2) +
-      " e=" + DoubleToString(entryEMA[0], 2) +
-      ", candle=" + (candleConfirmSell ? "PASS" : "BLOCK") +
-      " body=" + DoubleToString(body1 / point, 1) +
-      " min=" + IntegerToString(MinSignalBodyPoints) +
-      ", rsi=" + (rsiSellPass ? "PASS" : "BLOCK") +
-      " v=" + DoubleToString(rsi[0], 2) +
-      " max=" + DoubleToString(SellRSILevel, 1) +
-      "]";
 
    return true;
 }
@@ -749,38 +713,9 @@ void GetTrendFallbackSignals(bool &buySignal, bool &sellSignal)
 
    bool fallbackBuyConfirm = body1 >= MinSignalBodyPoints * point && bullishPrevCandle;
    bool fallbackSellConfirm = body1 >= MinSignalBodyPoints * point && bearishPrevCandle;
-   bool fallbackRsiBuyPass = rsi[0] >= BuyRSILevel + 2.0;
-   bool fallbackRsiSellPass = rsi[0] <= SellRSILevel - 2.0;
 
-   buySignal = strongUpTrend && makingHigherHigh && fallbackBuyConfirm && fallbackRsiBuyPass;
-   sellSignal = strongDownTrend && makingLowerLow && fallbackSellConfirm && fallbackRsiSellPass;
-
-   if(!lastBuySignal && !lastSellSignal)
-   {
-      lastSignalDecisionLog =
-         lastSignalDecisionLog +
-         " | FALLBACK BUY[trend=" + (strongUpTrend ? "PASS" : "BLOCK") +
-         " c1=" + DoubleToString(close1, 2) +
-         " e=" + DoubleToString(entryEMA[0], 2) +
-         ", structure=" + (makingHigherHigh ? "PASS" : "BLOCK") +
-         " h1=" + DoubleToString(high1, 2) +
-         " h2=" + DoubleToString(high2, 2) +
-         ", candle=" + (fallbackBuyConfirm ? "PASS" : "BLOCK") +
-         " body=" + DoubleToString(body1 / point, 1) +
-         ", rsi=" + (fallbackRsiBuyPass ? "PASS" : "BLOCK") +
-         " v=" + DoubleToString(rsi[0], 2) +
-         "] FALLBACK SELL[trend=" + (strongDownTrend ? "PASS" : "BLOCK") +
-         " c1=" + DoubleToString(close1, 2) +
-         " e=" + DoubleToString(entryEMA[0], 2) +
-         ", structure=" + (makingLowerLow ? "PASS" : "BLOCK") +
-         " l1=" + DoubleToString(low1, 2) +
-         " l2=" + DoubleToString(low2, 2) +
-         ", candle=" + (fallbackSellConfirm ? "PASS" : "BLOCK") +
-         " body=" + DoubleToString(body1 / point, 1) +
-         ", rsi=" + (fallbackRsiSellPass ? "PASS" : "BLOCK") +
-         " v=" + DoubleToString(rsi[0], 2) +
-         "]";
-   }
+   buySignal = strongUpTrend && makingHigherHigh && fallbackBuyConfirm && rsi[0] >= BuyRSILevel + 2.0;
+   sellSignal = strongDownTrend && makingLowerLow && fallbackSellConfirm && rsi[0] <= SellRSILevel - 2.0;
 }
 
 //+------------------------------------------------------------------+
@@ -862,26 +797,15 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
    double splitLot2 = NormalizeLots(LotSize / 3.0);
    double splitLot3 = NormalizeLots(LotSize - splitLot1 - splitLot2);
    if(splitLot3 <= 0.0) splitLot3 = splitLot2;
-   double splitStep = SplitLimitEntryStepPoints * point;
-   double entry1 = entry;
-   double entry2 = isBuy ? entry - splitStep : entry + splitStep;
-   double entry3 = isBuy ? entry - (splitStep * 2.0) : entry + (splitStep * 2.0);
-   double sl1 = sl;
-   double sl2 = isBuy ? entry2 - StopLossPoints * point : entry2 + StopLossPoints * point;
-   double sl3 = isBuy ? entry3 - StopLossPoints * point : entry3 + StopLossPoints * point;
-
-   NormalizeTradeLevels(isBuy, entry1, sl1, tp1, digits);
-   NormalizeTradeLevels(isBuy, entry2, sl2, tp2, digits);
-   NormalizeTradeLevels(isBuy, entry3, sl3, tp3, digits);
 
    if(UseLimitOrders)
    {
       datetime expiry = TimeCurrent() + PendingExpiryMinutes * 60;
       if(UseThreeOrderSplit)
       {
-         bool ok1 = PlaceSingleLimit(isBuy, splitLot1, entry1, sl1, tp1, expiry, reason + " TP1");
-         bool ok2 = PlaceSingleLimit(isBuy, splitLot2, entry2, sl2, tp2, expiry, reason + " TP2");
-         bool ok3 = PlaceSingleLimit(isBuy, splitLot3, entry3, sl3, tp3, expiry, reason + " TP3");
+         bool ok1 = PlaceSingleLimit(isBuy, splitLot1, entry, sl, tp1, expiry, reason + " TP1");
+         bool ok2 = PlaceSingleLimit(isBuy, splitLot2, entry, sl, tp2, expiry, reason + " TP2");
+         bool ok3 = PlaceSingleLimit(isBuy, splitLot3, entry, sl, tp3, expiry, reason + " TP3");
          result = ok1 || ok2 || ok3;
       }
       else
@@ -897,10 +821,7 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
          lastTradeCandleTime = candleTime;
          lastPendingRefreshTime = TimeCurrent();
          lastEntryOpenTime = TimeCurrent();
-         if(UseThreeOrderSplit)
-            LogStatus(side + " LIMIT ladder placed | E1: " + DoubleToString(entry1, digits) + " | E2: " + DoubleToString(entry2, digits) + " | E3: " + DoubleToString(entry3, digits));
-         else
-            LogStatus(side + " LIMIT placed | Entry: " + DoubleToString(entry, digits) + " | SL: " + DoubleToString(sl, digits));
+         LogStatus(side + " LIMIT placed | Entry: " + DoubleToString(entry, digits) + " | SL: " + DoubleToString(sl, digits));
          if(UseThreeOrderSplit)
             SendSplitEntrySummary(side, "LIMIT SPLIT", sl, tp1, tp2, tp3, digits);
          else
