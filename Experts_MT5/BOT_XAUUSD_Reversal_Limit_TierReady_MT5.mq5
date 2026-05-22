@@ -11,7 +11,7 @@ CTrade trade;
 
 // ================= INPUT TRADING =================
 input string TradeSymbol              = "XAUUSD";
-input double LotSize                  = 0.09;
+input double LotSize                  = 0.01;
 input int    MagicNumber              = 2026051912;
 input int    MaxSpreadPoints          = 600;
 input int    SlippagePoints           = 50;
@@ -42,9 +42,14 @@ input int    PendingExpiryMinutes     = 2;
 input bool   FallbackMarketIfRejected = true;
 input bool   DeleteOppositePending    = true;
 input bool   RefreshStalePending      = true;
-input bool   UseThreeOrderSplit       = true;
+input bool   UseThreeOrderSplit       = false;
 input double TP2Multiplier            = 1.50;
 input double TP3Multiplier            = 2.00;
+input bool   UsePartialTakeProfit     = true;
+input int    PartialTP1Points         = 200;
+input double PartialTP1ClosePercent   = 50.0;
+input int    PartialTP2Points         = 350;
+input double PartialTP2ClosePercent   = 50.0;
 
 input bool   UseTrailingStop          = true;
 input bool   UseAutoSLPlus            = true;
@@ -107,6 +112,28 @@ bool lastFallbackBuySignal = false;
 bool lastFallbackSellSignal = false;
 ulong lastNotifiedDealTicket = 0;
 string lastSignalDecisionLog = "";
+ulong trackedPartialPositionTicket = 0;
+bool partialTP1Done = false;
+bool partialTP2Done = false;
+
+void ResetPartialTPState()
+{
+   trackedPartialPositionTicket = 0;
+   partialTP1Done = false;
+   partialTP2Done = false;
+}
+
+bool ClosePartialVolume(const ulong ticket, const double positionVolume, const double percentToClose)
+{
+   double minLot = SymbolInfoDouble(symbolName, SYMBOL_VOLUME_MIN);
+   double closeVolume = NormalizeLots(positionVolume * percentToClose / 100.0);
+   double remainingVolume = NormalizeLots(positionVolume - closeVolume);
+
+   if(closeVolume < minLot) return false;
+   if(remainingVolume < minLot) return false;
+
+   return trade.PositionClosePartial(ticket, closeVolume);
+}
 
 double NormalizeLots(const double lots)
 {
@@ -323,7 +350,8 @@ string BuildTechnicalSummary()
           "\nEntry EMA: " + IntegerToString(EntryEMA) +
           "\nRSI Period: " + IntegerToString(RSI_Period) +
           "\nRSI Buy/Sell: " + DoubleToString(BuyRSILevel, 1) + " / " + DoubleToString(SellRSILevel, 1) +
-          "\nMode: Reversal + Limit + SL Plus + Trailing");
+          "\nMode: Reversal + Limit + SL Plus + Trailing" +
+          "\nPartial TP: " + (UsePartialTakeProfit ? "ON" : "OFF"));
 }
 
 string BuildStartupMessage()
@@ -444,6 +472,7 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    CheckNewDay();
+   if(UsePartialTakeProfit) ManagePartialTakeProfit();
    if(UseTrailingStop) ManageTrailingStop();
    ShowPanel();
 
@@ -498,6 +527,7 @@ void OnTick()
    if(lastKnownPositionCount > 0 && myPositions == 0)
    {
       lastPositionExitTime = TimeCurrent();
+      ResetPartialTPState();
       LogStatus("No open position detected. Waiting for next valid re-entry signal.");
       lastReentryLogTime = TimeCurrent();
    }
@@ -972,6 +1002,57 @@ void PlaceEntryMarket(const bool isBuy, const datetime candleTime, const string 
       string failMessage = side + " ENTRY FAILED\nSymbol: " + symbolName + "\nReason: " + failReason;
       LogStatus(side + " MARKET failed: " + failReason);
       SendTelegram(failMessage);
+   }
+}
+
+//+------------------------------------------------------------------+
+void ManagePartialTakeProfit()
+{
+   double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+   double bid = SymbolInfoDouble(symbolName, SYMBOL_BID);
+   double ask = SymbolInfoDouble(symbolName, SYMBOL_ASK);
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != symbolName || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+      int type = (int)PositionGetInteger(POSITION_TYPE);
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      double profitPoints = 0.0;
+
+      if(type == POSITION_TYPE_BUY)
+         profitPoints = (bid - openPrice) / point;
+      else if(type == POSITION_TYPE_SELL)
+         profitPoints = (openPrice - ask) / point;
+
+      if(trackedPartialPositionTicket != ticket)
+      {
+         trackedPartialPositionTicket = ticket;
+         partialTP1Done = false;
+         partialTP2Done = false;
+      }
+
+      if(!partialTP1Done && profitPoints >= PartialTP1Points)
+      {
+         if(ClosePartialVolume(ticket, volume, PartialTP1ClosePercent))
+         {
+            partialTP1Done = true;
+            LogStatus("Partial TP1 executed on ticket: " + IntegerToString((int)ticket));
+         }
+      }
+
+      if(!partialTP2Done && profitPoints >= PartialTP2Points)
+      {
+         double refreshedVolume = PositionGetDouble(POSITION_VOLUME);
+         if(ClosePartialVolume(ticket, refreshedVolume, PartialTP2ClosePercent))
+         {
+            partialTP2Done = true;
+            LogStatus("Partial TP2 executed on ticket: " + IntegerToString((int)ticket));
+         }
+      }
    }
 }
 

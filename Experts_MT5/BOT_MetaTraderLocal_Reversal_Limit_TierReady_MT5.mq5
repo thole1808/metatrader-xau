@@ -17,7 +17,7 @@ input int    MaxSpreadPoints          = 600;
 input int    SlippagePoints           = 50;
 
 input ENUM_TIMEFRAMES TrendTF         = PERIOD_M15;
-input ENUM_TIMEFRAMES SignalTF        = PERIOD_M15;
+input ENUM_TIMEFRAMES SignalTF        = PERIOD_M5;
 input int    TrendEMA                 = 34;
 
 input int    EntryEMA                 = 12;
