@@ -11,7 +11,7 @@ CTrade trade;
 
 // ================= INPUT TRADING =================
 input string TradeSymbol              = "XAUUSDc";
-input double LotSize                  = 0.03;
+input double LotSize                  = 0.09;
 input int    MagicNumber              = 2026051912;
 input int    MaxSpreadPoints          = 600;
 input int    SlippagePoints           = 50;
@@ -37,7 +37,7 @@ input int    TakeProfitPoints         = 500;             // About 50 pips target
 
 input bool   UseLimitOrders           = true;
 input int    LimitOffsetPoints        = 40;
-input int    SplitLimitEntryStepPoints = 40;
+input int    SplitLimitEntryStepPoints = 60;
 input int    PendingExpiryMinutes     = 2;
 input bool   FallbackMarketIfRejected = true;
 input bool   DeleteOppositePending    = true;
