@@ -31,9 +31,12 @@ input bool   UseMarketForTrendFallback = true;           // Keep trend-follow en
 input bool   RequireCandleConfirmation = true;
 input int    MinSignalBodyPoints      = 35;
 input double MaxOppositeWickRatio     = 1.80;
+input bool   UseSNRFilter             = true;
+input int    SNRLookbackBars          = 24;
+input int    SNRZonePoints            = 250;
 
-input int    StopLossPoints           = 1000;
-input int    TakeProfitPoints         = 500;             // About 50 pips target per run
+input int    StopLossPoints           = 400;             // 40 pips risk for small standard account
+input int    TakeProfitPoints         = 250;             // 25 pips target
 
 input bool   UseLimitOrders           = true;
 input int    LimitOffsetPoints        = 40;
@@ -43,9 +46,12 @@ input bool   FallbackMarketIfRejected = true;
 input bool   DeleteOppositePending    = true;
 input bool   RefreshStalePending      = true;
 input bool   UseThreeOrderSplit       = false;
-input double TP2Multiplier            = 1.50;
-input double TP3Multiplier            = 2.00;
-input bool   UsePartialTakeProfit     = true;
+input double TP2Multiplier            = 1.00;
+input double TP3Multiplier            = 1.00;
+input bool   UseMomentumExtraLimit    = false;
+input double MomentumExtraLimitLotPercent = 50.0;
+input int    MomentumExtraLimitStepPoints = 180;
+input bool   UsePartialTakeProfit     = false;
 input int    PartialTP1Points         = 200;
 input double PartialTP1ClosePercent   = 50.0;
 input int    PartialTP2Points         = 350;
@@ -53,18 +59,22 @@ input double PartialTP2ClosePercent   = 50.0;
 
 input bool   UseTrailingStop          = true;
 input bool   UseAutoSLPlus            = true;
-input int    SLPlusTriggerPoints      = 60;
+input int    SLPlusTriggerPoints      = 100;
 input int    SLPlusLockPoints         = 30;
-input int    TrailStartPoints         = 90;
-input int    TrailStepPoints          = 40;
+input int    TrailStartPoints         = 150;
+input int    TrailStepPoints          = 50;
 
-input double DailyMaxLossMoney        = 150.0;
-input double DailyTargetMoney         = 1000.0;
+input double DailyMaxLossMoney        = 2.0;
+input double DailyTargetMoney         = 4.0;
 input int    MaxDailyLosingDeals      = 0;
 
 input bool   OneTradePerCandle        = false;
 input int    ReentryCooldownBars      = 1;
 input int    MinMinutesBetweenEntries = 5;
+input bool   UseLondonTradingHours    = true;
+input int    TradingStartHourWIB      = 14;
+input int    TradingEndHourWIB        = 23;
+input int    TradingHourOffsetToWIB   = 0;              // Add this to broker server hour to get WIB
 
 // ================= REVERSAL MODE =================
 input bool   EnableReversalMode       = true;
@@ -106,6 +116,12 @@ double lastOpen1 = 0.0;
 double lastClose1 = 0.0;
 double lastHigh1 = 0.0;
 double lastLow1 = 0.0;
+double lastSupportLevel = 0.0;
+double lastResistanceLevel = 0.0;
+bool lastSNRBuyPass = false;
+bool lastSNRSellPass = false;
+bool lastMomentumBuySignal = false;
+bool lastMomentumSellSignal = false;
 bool lastBuySignal = false;
 bool lastSellSignal = false;
 bool lastFallbackBuySignal = false;
@@ -133,6 +149,55 @@ bool ClosePartialVolume(const ulong ticket, const double positionVolume, const d
    if(remainingVolume < minLot) return false;
 
    return trade.PositionClosePartial(ticket, closeVolume);
+}
+
+bool GetSNRLevels(double &supportLevel, double &resistanceLevel)
+{
+   int bars = Bars(symbolName, SignalTF);
+   int lookback = MathMax(3, SNRLookbackBars);
+   if(bars <= lookback + 2) return false;
+
+   supportLevel = DBL_MAX;
+   resistanceLevel = -DBL_MAX;
+
+   for(int shift = 2; shift < lookback + 2; shift++)
+   {
+      double barLow = iLow(symbolName, SignalTF, shift);
+      double barHigh = iHigh(symbolName, SignalTF, shift);
+      if(barLow <= 0.0 || barHigh <= 0.0) return false;
+
+      if(barLow < supportLevel) supportLevel = barLow;
+      if(barHigh > resistanceLevel) resistanceLevel = barHigh;
+   }
+
+   return(supportLevel < DBL_MAX && resistanceLevel > 0.0);
+}
+
+void CheckSNRPass(const double low1, const double high1, bool &snrBuyPass, bool &snrSellPass)
+{
+   snrBuyPass = true;
+   snrSellPass = true;
+   lastSupportLevel = 0.0;
+   lastResistanceLevel = 0.0;
+
+   if(!UseSNRFilter) return;
+
+   double supportLevel = 0.0;
+   double resistanceLevel = 0.0;
+   if(!GetSNRLevels(supportLevel, resistanceLevel))
+   {
+      snrBuyPass = false;
+      snrSellPass = false;
+      return;
+   }
+
+   double point = SymbolInfoDouble(symbolName, SYMBOL_POINT);
+   double zone = MathMax(1, SNRZonePoints) * point;
+
+   lastSupportLevel = supportLevel;
+   lastResistanceLevel = resistanceLevel;
+   snrBuyPass = low1 <= supportLevel + zone;
+   snrSellPass = high1 >= resistanceLevel - zone;
 }
 
 double NormalizeLots(const double lots)
@@ -176,6 +241,8 @@ void LogIndicatorSnapshot(const datetime candleTime)
          " | H=", DoubleToString(lastHigh1, 2),
          " | L=", DoubleToString(lastLow1, 2),
          " | C=", DoubleToString(lastClose1, 2),
+         " | Support=", DoubleToString(lastSupportLevel, 2),
+         " | Resistance=", DoubleToString(lastResistanceLevel, 2),
          " | Signal=", signalLabel);
 
    if(lastSignalDecisionLog != "")
@@ -323,6 +390,30 @@ bool IsMarketSessionOpen()
    return(ask > 0.0 && bid > 0.0);
 }
 
+int CurrentHourWIB()
+{
+   MqlDateTime nowStruct;
+   TimeToStruct(TimeCurrent(), nowStruct);
+   int hour = (nowStruct.hour + TradingHourOffsetToWIB) % 24;
+   if(hour < 0) hour += 24;
+   return hour;
+}
+
+bool IsTradingHourOpen()
+{
+   if(!UseLondonTradingHours) return true;
+
+   int currentHour = CurrentHourWIB();
+   int startHour = ((TradingStartHourWIB % 24) + 24) % 24;
+   int endHour = ((TradingEndHourWIB % 24) + 24) % 24;
+
+   if(startHour == endHour) return true;
+   if(startHour < endHour)
+      return(currentHour >= startHour && currentHour < endHour);
+
+   return(currentHour >= startHour || currentHour < endHour);
+}
+
 double GetPositionEntryPriceFromHistory(const ulong positionId)
 {
    if(positionId == 0 || !HistorySelect(0, TimeCurrent())) return(0.0);
@@ -350,6 +441,10 @@ string BuildTechnicalSummary()
           "\nEntry EMA: " + IntegerToString(EntryEMA) +
           "\nRSI Period: " + IntegerToString(RSI_Period) +
           "\nRSI Buy/Sell: " + DoubleToString(BuyRSILevel, 1) + " / " + DoubleToString(SellRSILevel, 1) +
+          "\nSNR Filter: " + (UseSNRFilter ? "ON" : "OFF") +
+          "\nSNR Lookback/Zone: " + IntegerToString(SNRLookbackBars) + " / " + IntegerToString(SNRZonePoints) +
+          "\nMomentum Extra Limit: " + (UseMomentumExtraLimit ? "ON" : "OFF") +
+          "\nTrading Hours WIB: " + (UseLondonTradingHours ? IntegerToString(TradingStartHourWIB) + ":00-" + IntegerToString(TradingEndHourWIB) + ":00" : "OFF") +
           "\nMode: Reversal + Limit + SL Plus + Trailing" +
           "\nPartial TP: " + (UsePartialTakeProfit ? "ON" : "OFF"));
 }
@@ -481,6 +576,12 @@ void OnTick()
    if(!IsMarketSessionOpen())
    {
       lastStatus = "Market closed, waiting open session";
+      return;
+   }
+
+   if(!IsTradingHourOpen())
+   {
+      lastStatus = "Outside London trading hours";
       return;
    }
 
@@ -695,19 +796,30 @@ bool GetSignals(bool &buySignal, bool &sellSignal)
    bool rsiSellPass = rsi[0] <= SellRSILevel;
    bool entryBuyPass = close1 > entryEMA[0];
    bool entrySellPass = close1 < entryEMA[0];
+   bool buyMomentumSetup = false;
+   bool sellMomentumSetup = false;
+   bool snrBuyPass = true;
+   bool snrSellPass = true;
+   CheckSNRPass(low1, high1, snrBuyPass, snrSellPass);
+   lastSNRBuyPass = snrBuyPass;
+   lastSNRSellPass = snrSellPass;
 
-   buySignal = trendBuy && entryBuyPass && candleConfirmBuy && rsiBuyPass;
-   sellSignal = trendSell && entrySellPass && candleConfirmSell && rsiSellPass;
+   buySignal = trendBuy && entryBuyPass && candleConfirmBuy && rsiBuyPass && snrBuyPass;
+   sellSignal = trendSell && entrySellPass && candleConfirmSell && rsiSellPass && snrSellPass;
 
    if(UseFastEntryMode)
    {
       bool buyMomentum = rsi[0] >= BuyRSILevel && rsi[1] >= BuyRSILevel - 2.0;
       bool sellMomentum = rsi[0] <= SellRSILevel && rsi[1] <= SellRSILevel + 2.0;
 
-      buySignal = buySignal || (trendBuy && close1 > entryEMA[1] && buyMomentum && priceImprovingBuy && candleConfirmBuy);
-      sellSignal = sellSignal || (trendSell && close1 < entryEMA[1] && sellMomentum && priceImprovingSell && candleConfirmSell);
+      buyMomentumSetup = trendBuy && close1 > entryEMA[1] && buyMomentum && priceImprovingBuy && candleConfirmBuy && snrBuyPass;
+      sellMomentumSetup = trendSell && close1 < entryEMA[1] && sellMomentum && priceImprovingSell && candleConfirmSell && snrSellPass;
+      buySignal = buySignal || buyMomentumSetup;
+      sellSignal = sellSignal || sellMomentumSetup;
    }
 
+   lastMomentumBuySignal = buyMomentumSetup;
+   lastMomentumSellSignal = sellMomentumSetup;
    lastBuySignal = buySignal;
    lastSellSignal = sellSignal;
    lastSignalDecisionLog =
@@ -723,6 +835,9 @@ bool GetSignals(bool &buySignal, bool &sellSignal)
       ", rsi=" + (rsiBuyPass ? "PASS" : "BLOCK") +
       " v=" + DoubleToString(rsi[0], 2) +
       " min=" + DoubleToString(BuyRSILevel, 1) +
+      ", snr=" + (snrBuyPass ? "PASS" : "BLOCK") +
+      " sup=" + DoubleToString(lastSupportLevel, 2) +
+      ", momentum=" + (buyMomentumSetup ? "PASS" : "BLOCK") +
       "] SELL[trend=" + (trendSell ? "PASS" : "BLOCK") +
       " tc=" + DoubleToString(trendClose, 2) +
       " ema=" + DoubleToString(trendEMA[0], 2) +
@@ -735,6 +850,9 @@ bool GetSignals(bool &buySignal, bool &sellSignal)
       ", rsi=" + (rsiSellPass ? "PASS" : "BLOCK") +
       " v=" + DoubleToString(rsi[0], 2) +
       " max=" + DoubleToString(SellRSILevel, 1) +
+      ", snr=" + (snrSellPass ? "PASS" : "BLOCK") +
+      " res=" + DoubleToString(lastResistanceLevel, 2) +
+      ", momentum=" + (sellMomentumSetup ? "PASS" : "BLOCK") +
       "]";
 
    return true;
@@ -903,6 +1021,14 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
    NormalizeTradeLevels(isBuy, entry1, sl1, tp1, digits);
    NormalizeTradeLevels(isBuy, entry2, sl2, tp2, digits);
    NormalizeTradeLevels(isBuy, entry3, sl3, tp3, digits);
+   bool momentumExtraActive = UseMomentumExtraLimit && ((isBuy && lastMomentumBuySignal) || (!isBuy && lastMomentumSellSignal));
+   double momentumLot = NormalizeLots(LotSize * MathMax(1.0, MomentumExtraLimitLotPercent) / 100.0);
+   double momentumStep = MathMax(MomentumExtraLimitStepPoints * point, splitStep * 3.0);
+   double entryMomentum = isBuy ? entry - momentumStep : entry + momentumStep;
+   double slMomentum = isBuy ? entryMomentum - StopLossPoints * point : entryMomentum + StopLossPoints * point;
+   double tpMomentum = isBuy ? entryMomentum + (TakeProfitPoints * TP3Multiplier) * point : entryMomentum - (TakeProfitPoints * TP3Multiplier) * point;
+   entryMomentum = NormalizeDouble(entryMomentum, digits);
+   NormalizeTradeLevels(isBuy, entryMomentum, slMomentum, tpMomentum, digits);
 
    if(UseLimitOrders)
    {
@@ -912,7 +1038,10 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
          bool ok1 = PlaceSingleLimit(isBuy, splitLot1, entry1, sl1, tp1, expiry, reason + " TP1");
          bool ok2 = PlaceSingleLimit(isBuy, splitLot2, entry2, sl2, tp2, expiry, reason + " TP2");
          bool ok3 = PlaceSingleLimit(isBuy, splitLot3, entry3, sl3, tp3, expiry, reason + " TP3");
-         result = ok1 || ok2 || ok3;
+         bool okMomentum = false;
+         if(momentumExtraActive)
+            okMomentum = PlaceSingleLimit(isBuy, momentumLot, entryMomentum, slMomentum, tpMomentum, expiry, reason + " MOMENTUM");
+         result = ok1 || ok2 || ok3 || okMomentum;
       }
       else
       {
@@ -920,6 +1049,8 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
             result = trade.BuyLimit(LotSize, entry, symbolName, sl, tp1, ORDER_TIME_SPECIFIED, expiry, reason);
          else
             result = trade.SellLimit(LotSize, entry, symbolName, sl, tp1, ORDER_TIME_SPECIFIED, expiry, reason);
+         if(result && momentumExtraActive)
+            PlaceSingleLimit(isBuy, momentumLot, entryMomentum, slMomentum, tpMomentum, expiry, reason + " MOMENTUM");
       }
 
       if(result)
@@ -928,7 +1059,10 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
          lastPendingRefreshTime = TimeCurrent();
          lastEntryOpenTime = TimeCurrent();
          if(UseThreeOrderSplit)
-            LogStatus(side + " LIMIT ladder placed | E1: " + DoubleToString(entry1, digits) + " | E2: " + DoubleToString(entry2, digits) + " | E3: " + DoubleToString(entry3, digits));
+         {
+            string momentumLabel = momentumExtraActive ? " | M: " + DoubleToString(entryMomentum, digits) : "";
+            LogStatus(side + " LIMIT ladder placed | E1: " + DoubleToString(entry1, digits) + " | E2: " + DoubleToString(entry2, digits) + " | E3: " + DoubleToString(entry3, digits) + momentumLabel);
+         }
          else
             LogStatus(side + " LIMIT placed | Entry: " + DoubleToString(entry, digits) + " | SL: " + DoubleToString(sl, digits));
          if(UseThreeOrderSplit)
@@ -1291,12 +1425,13 @@ void ShowPanel()
    double dailyPL = AccountInfoDouble(ACCOUNT_EQUITY) - startDayEquity;
    string tfLabel = EnumToString((ENUM_TIMEFRAMES)SignalTF);
    string sessionLabel = IsMarketSessionOpen() ? "OPEN" : "CLOSED";
+   string hoursLabel = IsTradingHourOpen() ? "OPEN" : "CLOSED";
    Comment("BOT MetaTraderLocal Reversal Limit\n",
            "Symbol: ", symbolName, " | TF: ", tfLabel, "\n",
            "Positions: ", CountMyPositions(), " | Pending: ", CountMyPendingOrders(), "\n",
            "Daily P/L: ", DoubleToString(dailyPL, 2), "\n",
            "Lot: ", DoubleToString(LotSize, 2), " | Spread: ", IntegerToString((int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD)), "\n",
-           "Session: ", sessionLabel, "\n",
+           "Session: ", sessionLabel, " | London WIB: ", hoursLabel, " ", IntegerToString(CurrentHourWIB()), ":00\n",
            "Mode: REVERSAL / LIMIT / NO GRID\n",
            "Status: ", lastStatus);
 }
