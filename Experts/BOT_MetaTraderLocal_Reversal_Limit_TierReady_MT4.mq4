@@ -28,8 +28,8 @@ input bool   InpRequireCandleConfirmation = true;
 input int    InpMinSignalBodyPoints     = 35;
 input double InpMaxOppositeWickRatio    = 1.80;
 
-input int    InpStopLossPoints          = 1000;
-input int    InpTakeProfitPoints        = 500;
+input int    InpStopLossPoints          = 1200;
+input int    InpTakeProfitPoints        = 1000;
 
 input bool   InpUseLimitOrders          = true;
 input int    InpLimitOffsetPoints       = 40;
@@ -43,10 +43,10 @@ input double InpTP3Multiplier           = 2.00;
 
 input bool   InpUseTrailingStop         = true;
 input bool   InpUseAutoSLPlus           = true;
-input int    InpSLPlusTriggerPoints     = 60;
-input int    InpSLPlusLockPoints        = 30;
-input int    InpTrailStartPoints        = 90;
-input int    InpTrailStepPoints         = 40;
+input int    InpSLPlusTriggerPoints     = 250;
+input int    InpSLPlusLockPoints        = 100;
+input int    InpTrailStartPoints        = 400;
+input int    InpTrailStepPoints         = 150;
 
 input double InpDailyMaxLossMoney       = 150.0;
 input double InpDailyTargetMoney        = 300.0;
