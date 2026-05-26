@@ -11,13 +11,17 @@ CTrade trade;
 
 // ================= INPUT TRADING =================
 input string TradeSymbol              = "XAUUSDc";
-input double LotSize                  = 0.09;
+input double LotSize                  = 0.01;            // Fallback lot per order for cent account
+input bool   UseEquityLotSizing       = true;
+input double EquityPer001Lot          = 10.0;            // Every 10 equity adds 0.01 lot per order
+input double MaxAutoLot               = 0.05;            // Hard cap per order
+input int    EntryOrderCount          = 5;               // 5 orders = partial-style ladder
 input int    MagicNumber              = 2026051912;
 input int    MaxSpreadPoints          = 600;
 input int    SlippagePoints           = 50;
 
-input ENUM_TIMEFRAMES TrendTF         = PERIOD_M15;
-input ENUM_TIMEFRAMES SignalTF        = PERIOD_M15;
+input ENUM_TIMEFRAMES TrendTF         = PERIOD_M5;
+input ENUM_TIMEFRAMES SignalTF        = PERIOD_M5;
 input int    TrendEMA                 = 34;
 
 input int    EntryEMA                 = 12;
@@ -35,29 +39,29 @@ input bool   UseSNRFilter             = true;
 input int    SNRLookbackBars          = 24;
 input int    SNRZonePoints            = 250;
 
-input int    StopLossPoints           = 600;             // Cent scalping risk cap
-input int    TakeProfitPoints         = 300;             // Faster TP for cent account
+input int    StopLossPoints           = 350;             // 35 pips risk cap
+input int    TakeProfitPoints         = 120;             // 12 pips fast TP1
 
 input bool   UseLimitOrders           = true;
-input int    LimitOffsetPoints        = 40;
-input int    SplitLimitEntryStepPoints = 60;
-input int    PendingExpiryMinutes     = 2;
+input int    LimitOffsetPoints        = 100;             // First pending waits about 10 pips pullback
+input int    SplitLimitEntryStepPoints = 300;            // 5-order ladder spacing: about 30 pips
+input int    PendingExpiryMinutes     = 5;               // Give wider ladder more time to fill
 input bool   FallbackMarketIfRejected = true;
 input bool   DeleteOppositePending    = true;
 input bool   RefreshStalePending      = true;
 input bool   UseThreeOrderSplit       = true;
-input double TP2Multiplier            = 1.25;
-input double TP3Multiplier            = 1.50;
+input double TP2Multiplier            = 2.00;            // Second order runner target: 24 pips
+input double TP3Multiplier            = 2.00;
 input bool   UseMomentumExtraLimit    = false;
 input double MomentumExtraLimitLotPercent = 50.0;
 input int    MomentumExtraLimitStepPoints = 180;
 
 input bool   UseTrailingStop          = true;
 input bool   UseAutoSLPlus            = true;
-input int    SLPlusTriggerPoints      = 120;             // Move SL sooner after profit
-input int    SLPlusLockPoints         = 40;              // Lock small profit faster
-input int    TrailStartPoints         = 180;             // Start trailing earlier
-input int    TrailStepPoints          = 60;              // Tighter trailing step
+input int    SLPlusTriggerPoints      = 50;              // Move SL after 5 pips profit
+input int    SLPlusLockPoints         = 20;              // Lock 2 pips faster
+input int    TrailStartPoints         = 80;              // Start trailing after 8 pips
+input int    TrailStepPoints          = 30;              // 3 pips trailing step
 
 input double DailyMaxLossMoney        = 150.0;
 input double DailyTargetMoney         = 1000.0;
@@ -67,8 +71,8 @@ input bool   OneTradePerCandle        = false;
 input int    ReentryCooldownBars      = 1;
 input int    MinMinutesBetweenEntries = 5;
 input bool   UseLondonTradingHours    = true;
-input int    TradingStartHourWIB      = 14;
-input int    TradingEndHourWIB        = 23;
+input int    TradingStartHourWIB      = 0;
+input int    TradingEndHourWIB        = 24;
 input int    TradingHourOffsetToWIB   = 0;              // Add this to broker server hour to get WIB
 
 // ================= REVERSAL MODE =================
@@ -139,6 +143,34 @@ double NormalizeLots(const double lots)
    if(stepLot < 0.01) lotDigits = 3;
    if(stepLot < 0.001) lotDigits = 4;
    return(NormalizeDouble(normalized, lotDigits));
+}
+
+double GetEntryLotSize()
+{
+   if(!UseEquityLotSizing) return NormalizeLots(LotSize);
+
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double equityStep = MathMax(1.0, EquityPer001Lot);
+   double rawLot = MathFloor(equity / equityStep) * 0.01;
+   if(rawLot < 0.01) rawLot = 0.01;
+   if(rawLot > MaxAutoLot) rawLot = MaxAutoLot;
+
+   return NormalizeLots(rawLot);
+}
+
+int EffectiveEntryOrderCount()
+{
+   if(!UseThreeOrderSplit) return 1;
+   return MathMax(1, MathMin(5, EntryOrderCount));
+}
+
+double TakeProfitMultiplierForOrder(const int orderIndex)
+{
+   if(orderIndex <= 1) return 1.0;
+   if(orderIndex == 2) return TP2Multiplier;
+   if(orderIndex == 3) return TP3Multiplier + 0.50;
+   if(orderIndex == 4) return TP3Multiplier + 1.00;
+   return TP3Multiplier + 1.50;
 }
 
 bool GetSNRLevels(double &supportLevel, double &resistanceLevel)
@@ -387,6 +419,13 @@ bool IsTradingHourOpen()
    return(currentHour >= startHour || currentHour < endHour);
 }
 
+string TradingHoursLabel()
+{
+   if(!UseLondonTradingHours) return "OFF";
+   if(TradingStartHourWIB == 0 && TradingEndHourWIB == 24) return "24H WIB";
+   return(IntegerToString(TradingStartHourWIB) + ":00-" + IntegerToString(TradingEndHourWIB) + ":00 WIB");
+}
+
 double GetPositionEntryPriceFromHistory(const ulong positionId)
 {
    if(positionId == 0 || !HistorySelect(0, TimeCurrent())) return(0.0);
@@ -417,18 +456,21 @@ string BuildTechnicalSummary()
           "\nSNR Filter: " + (UseSNRFilter ? "ON" : "OFF") +
           "\nSNR Lookback/Zone: " + IntegerToString(SNRLookbackBars) + " / " + IntegerToString(SNRZonePoints) +
           "\nMomentum Extra Limit: " + (UseMomentumExtraLimit ? "ON" : "OFF") +
-          "\nTrading Hours WIB: " + (UseLondonTradingHours ? IntegerToString(TradingStartHourWIB) + ":00-" + IntegerToString(TradingEndHourWIB) + ":00" : "OFF") +
+          "\nTrading Hours: " + TradingHoursLabel() +
           "\nMode: Reversal + Limit + SL Plus + Trailing");
 }
 
 string BuildStartupMessage()
 {
    string limitMode = UseLimitOrders ? "ON" : "OFF";
-   string splitMode = UseThreeOrderSplit ? "3 Orders" : "Single Order";
+   int orderCount = EffectiveEntryOrderCount();
+   string splitMode = UseThreeOrderSplit ? IntegerToString(orderCount) + " Orders" : "Single Order";
    string message = "EA STARTED" +
           "\nBot: Reversal Limit TierReady" +
           "\nSymbol: " + symbolName +
-          "\nLot: " + DoubleToString(LotSize, 2) +
+          "\nLot per order: " + DoubleToString(GetEntryLotSize(), 2) +
+          "\nAuto lot: " + (UseEquityLotSizing ? "ON" : "OFF") +
+          "\nMax orders: " + IntegerToString(orderCount) +
           "\nLimit Orders: " + limitMode +
           "\nExecution: " + splitMode +
           "\nSL Plus Trigger/Lock: " + IntegerToString(SLPlusTriggerPoints) + " / " + IntegerToString(SLPlusLockPoints) +
@@ -454,14 +496,15 @@ string BuildFormattedEntryMessage(const string side, const string mode, const do
                     "\nBot: Reversal Limit TierReady" +
                     "\nType: " + side + " " + mode +
                     "\nSymbol: " + symbolName +
-                    "\nLot Total: " + DoubleToString(LotSize, 2) +
+                    "\nLot/order: " + DoubleToString(GetEntryLotSize(), 2) +
                     "\nEntry: " + DoubleToString(entryPrice, digits) +
                     "\nSL: " + DoubleToString(sl, digits) + " (" + DoubleToString(slPips, 1) + " pips)" +
                     "\nTP1: " + DoubleToString(tp1, digits) + " (" + DoubleToString(tp1Pips, 1) + " pips)";
 
-   if(UseThreeOrderSplit)
-      message += "\nTP2: " + DoubleToString(tp2, digits) + " (" + DoubleToString(tp2Pips, 1) + " pips)" +
-                 "\nTP3: " + DoubleToString(tp3, digits) + " (" + DoubleToString(tp3Pips, 1) + " pips)";
+   if(UseThreeOrderSplit && EffectiveEntryOrderCount() >= 2)
+      message += "\nTP2: " + DoubleToString(tp2, digits) + " (" + DoubleToString(tp2Pips, 1) + " pips)";
+   if(UseThreeOrderSplit && EffectiveEntryOrderCount() >= 3)
+      message += "\nTP3: " + DoubleToString(tp3, digits) + " (" + DoubleToString(tp3Pips, 1) + " pips)";
 
    message += "\nProfit hari ini: " + DoubleToString(dailyPL, 2);
 
@@ -519,7 +562,7 @@ int OnInit()
    ResetDailyEquity();
    string limitOrdersLabel = "OFF";
    if(UseLimitOrders) limitOrdersLabel = "ON";
-   LogStatus("BOT Reversal Limit active on " + symbolName + " | Lot: " + DoubleToString(LotSize, 2) + " | LimitOrders: " + limitOrdersLabel);
+   LogStatus("BOT Reversal Limit active on " + symbolName + " | Lot/order: " + DoubleToString(GetEntryLotSize(), 2) + " | LimitOrders: " + limitOrdersLabel);
    SendTelegram(BuildStartupMessage());
 
    return INIT_SUCCEEDED;
@@ -976,23 +1019,11 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
    bool result = false;
    string side = "SELL";
    if(isBuy) side = "BUY";
-   double splitLot1 = NormalizeLots(LotSize / 3.0);
-   double splitLot2 = NormalizeLots(LotSize / 3.0);
-   double splitLot3 = NormalizeLots(LotSize - splitLot1 - splitLot2);
-   if(splitLot3 <= 0.0) splitLot3 = splitLot2;
+   double entryLot = GetEntryLotSize();
+   int orderCount = EffectiveEntryOrderCount();
    double splitStep = SplitLimitEntryStepPoints * point;
-   double entry1 = entry;
-   double entry2 = isBuy ? entry - splitStep : entry + splitStep;
-   double entry3 = isBuy ? entry - (splitStep * 2.0) : entry + (splitStep * 2.0);
-   double sl1 = sl;
-   double sl2 = isBuy ? entry2 - StopLossPoints * point : entry2 + StopLossPoints * point;
-   double sl3 = isBuy ? entry3 - StopLossPoints * point : entry3 + StopLossPoints * point;
-
-   NormalizeTradeLevels(isBuy, entry1, sl1, tp1, digits);
-   NormalizeTradeLevels(isBuy, entry2, sl2, tp2, digits);
-   NormalizeTradeLevels(isBuy, entry3, sl3, tp3, digits);
    bool momentumExtraActive = UseMomentumExtraLimit && ((isBuy && lastMomentumBuySignal) || (!isBuy && lastMomentumSellSignal));
-   double momentumLot = NormalizeLots(LotSize * MathMax(1.0, MomentumExtraLimitLotPercent) / 100.0);
+   double momentumLot = NormalizeLots(entryLot * MathMax(1.0, MomentumExtraLimitLotPercent) / 100.0);
    double momentumStep = MathMax(MomentumExtraLimitStepPoints * point, splitStep * 3.0);
    double entryMomentum = isBuy ? entry - momentumStep : entry + momentumStep;
    double slMomentum = isBuy ? entryMomentum - StopLossPoints * point : entryMomentum + StopLossPoints * point;
@@ -1005,20 +1036,29 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
       datetime expiry = TimeCurrent() + PendingExpiryMinutes * 60;
       if(UseThreeOrderSplit)
       {
-         bool ok1 = PlaceSingleLimit(isBuy, splitLot1, entry1, sl1, tp1, expiry, reason + " TP1");
-         bool ok2 = PlaceSingleLimit(isBuy, splitLot2, entry2, sl2, tp2, expiry, reason + " TP2");
-         bool ok3 = PlaceSingleLimit(isBuy, splitLot3, entry3, sl3, tp3, expiry, reason + " TP3");
+         for(int orderIndex = 1; orderIndex <= orderCount; orderIndex++)
+         {
+            double orderEntry = isBuy ? entry - splitStep * (orderIndex - 1) : entry + splitStep * (orderIndex - 1);
+            double orderSL = isBuy ? orderEntry - StopLossPoints * point : orderEntry + StopLossPoints * point;
+            double tpMultiplier = TakeProfitMultiplierForOrder(orderIndex);
+            double orderTP = isBuy ? orderEntry + TakeProfitPoints * tpMultiplier * point : orderEntry - TakeProfitPoints * tpMultiplier * point;
+            orderEntry = NormalizeDouble(orderEntry, digits);
+            NormalizeTradeLevels(isBuy, orderEntry, orderSL, orderTP, digits);
+
+            bool ok = PlaceSingleLimit(isBuy, entryLot, orderEntry, orderSL, orderTP, expiry, reason + " TP" + IntegerToString(orderIndex));
+            result = result || ok;
+         }
          bool okMomentum = false;
          if(momentumExtraActive)
             okMomentum = PlaceSingleLimit(isBuy, momentumLot, entryMomentum, slMomentum, tpMomentum, expiry, reason + " MOMENTUM");
-         result = ok1 || ok2 || ok3 || okMomentum;
+         result = result || okMomentum;
       }
       else
       {
          if(isBuy)
-            result = trade.BuyLimit(LotSize, entry, symbolName, sl, tp1, ORDER_TIME_SPECIFIED, expiry, reason);
+            result = trade.BuyLimit(entryLot, entry, symbolName, sl, tp1, ORDER_TIME_SPECIFIED, expiry, reason);
          else
-            result = trade.SellLimit(LotSize, entry, symbolName, sl, tp1, ORDER_TIME_SPECIFIED, expiry, reason);
+            result = trade.SellLimit(entryLot, entry, symbolName, sl, tp1, ORDER_TIME_SPECIFIED, expiry, reason);
          if(result && momentumExtraActive)
             PlaceSingleLimit(isBuy, momentumLot, entryMomentum, slMomentum, tpMomentum, expiry, reason + " MOMENTUM");
       }
@@ -1031,7 +1071,7 @@ void PlaceEntry(const bool isBuy, const datetime candleTime, const string reason
          if(UseThreeOrderSplit)
          {
             string momentumLabel = momentumExtraActive ? " | M: " + DoubleToString(entryMomentum, digits) : "";
-            LogStatus(side + " LIMIT ladder placed | E1: " + DoubleToString(entry1, digits) + " | E2: " + DoubleToString(entry2, digits) + " | E3: " + DoubleToString(entry3, digits) + momentumLabel);
+            LogStatus(side + " LIMIT ladder placed | Orders: " + IntegerToString(orderCount) + momentumLabel);
          }
          else
             LogStatus(side + " LIMIT placed | Entry: " + DoubleToString(entry, digits) + " | SL: " + DoubleToString(sl, digits));
@@ -1061,6 +1101,7 @@ void PlaceEntryMarket(const bool isBuy, const datetime candleTime, const string 
    bool result = false;
    string side = "SELL";
    if(isBuy) side = "BUY";
+   double entryLot = GetEntryLotSize();
 
    double marketEntry = isBuy ? ask : bid;
    double marketSL = isBuy ? marketEntry - StopLossPoints * point : marketEntry + StopLossPoints * point;
@@ -1070,24 +1111,27 @@ void PlaceEntryMarket(const bool isBuy, const datetime candleTime, const string 
    NormalizeTradeLevels(isBuy, marketEntry, marketSL, marketTP1, digits);
    NormalizeTradeLevels(isBuy, marketEntry, marketSL, marketTP2, digits);
    NormalizeTradeLevels(isBuy, marketEntry, marketSL, marketTP3, digits);
-   double splitLot1 = NormalizeLots(LotSize / 3.0);
-   double splitLot2 = NormalizeLots(LotSize / 3.0);
-   double splitLot3 = NormalizeLots(LotSize - splitLot1 - splitLot2);
-   if(splitLot3 <= 0.0) splitLot3 = splitLot2;
+   int orderCount = EffectiveEntryOrderCount();
 
    if(UseThreeOrderSplit)
    {
-      bool ok1 = PlaceSingleMarket(isBuy, splitLot1, marketSL, marketTP1, reason + " TP1");
-      bool ok2 = PlaceSingleMarket(isBuy, splitLot2, marketSL, marketTP2, reason + " TP2");
-      bool ok3 = PlaceSingleMarket(isBuy, splitLot3, marketSL, marketTP3, reason + " TP3");
-      result = ok1 || ok2 || ok3;
+      for(int orderIndex = 1; orderIndex <= orderCount; orderIndex++)
+      {
+         double tpMultiplier = TakeProfitMultiplierForOrder(orderIndex);
+         double marketTP = isBuy ? marketEntry + TakeProfitPoints * tpMultiplier * point : marketEntry - TakeProfitPoints * tpMultiplier * point;
+         double marketSLCopy = marketSL;
+         NormalizeTradeLevels(isBuy, marketEntry, marketSLCopy, marketTP, digits);
+
+         bool ok = PlaceSingleMarket(isBuy, entryLot, marketSLCopy, marketTP, reason + " TP" + IntegerToString(orderIndex));
+         result = result || ok;
+      }
    }
    else
    {
       if(isBuy)
-         result = trade.Buy(LotSize, symbolName, 0.0, marketSL, marketTP1, reason + " MARKET");
+         result = trade.Buy(entryLot, symbolName, 0.0, marketSL, marketTP1, reason + " MARKET");
       else
-         result = trade.Sell(LotSize, symbolName, 0.0, marketSL, marketTP1, reason + " MARKET");
+         result = trade.Sell(entryLot, symbolName, 0.0, marketSL, marketTP1, reason + " MARKET");
    }
 
    if(result)
@@ -1349,7 +1393,7 @@ void ShowPanel()
            "Symbol: ", symbolName, " | TF: ", tfLabel, "\n",
            "Positions: ", CountMyPositions(), " | Pending: ", CountMyPendingOrders(), "\n",
            "Daily P/L: ", DoubleToString(dailyPL, 2), "\n",
-           "Lot: ", DoubleToString(LotSize, 2), " | Spread: ", IntegerToString((int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD)), "\n",
+           "Lot/order: ", DoubleToString(GetEntryLotSize(), 2), " | Spread: ", IntegerToString((int)SymbolInfoInteger(symbolName, SYMBOL_SPREAD)), "\n",
            "Session: ", sessionLabel, " | London WIB: ", hoursLabel, " ", IntegerToString(CurrentHourWIB()), ":00\n",
            "Mode: REVERSAL / LIMIT / NO GRID\n",
            "Status: ", lastStatus);

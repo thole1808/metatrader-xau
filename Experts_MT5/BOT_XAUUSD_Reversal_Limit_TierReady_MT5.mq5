@@ -16,8 +16,8 @@ input int    MagicNumber              = 2026051912;
 input int    MaxSpreadPoints          = 600;
 input int    SlippagePoints           = 50;
 
-input ENUM_TIMEFRAMES TrendTF         = PERIOD_M15;
-input ENUM_TIMEFRAMES SignalTF        = PERIOD_M15;
+input ENUM_TIMEFRAMES TrendTF         = PERIOD_M5;
+input ENUM_TIMEFRAMES SignalTF        = PERIOD_M5;
 input int    TrendEMA                 = 34;
 
 input int    EntryEMA                 = 12;
@@ -35,8 +35,8 @@ input bool   UseSNRFilter             = true;
 input int    SNRLookbackBars          = 24;
 input int    SNRZonePoints            = 250;
 
-input int    StopLossPoints           = 400;             // 40 pips risk for small standard account
-input int    TakeProfitPoints         = 250;             // 25 pips target
+input int    StopLossPoints           = 350;             // 35 pips risk for small standard account
+input int    TakeProfitPoints         = 150;             // 15 pips faster target
 
 input bool   UseLimitOrders           = true;
 input int    LimitOffsetPoints        = 40;
@@ -59,10 +59,10 @@ input double PartialTP2ClosePercent   = 50.0;
 
 input bool   UseTrailingStop          = true;
 input bool   UseAutoSLPlus            = true;
-input int    SLPlusTriggerPoints      = 100;
-input int    SLPlusLockPoints         = 30;
-input int    TrailStartPoints         = 150;
-input int    TrailStepPoints          = 50;
+input int    SLPlusTriggerPoints      = 50;
+input int    SLPlusLockPoints         = 20;
+input int    TrailStartPoints         = 80;
+input int    TrailStepPoints          = 30;
 
 input double DailyMaxLossMoney        = 2.0;
 input double DailyTargetMoney         = 4.0;
@@ -72,8 +72,8 @@ input bool   OneTradePerCandle        = false;
 input int    ReentryCooldownBars      = 1;
 input int    MinMinutesBetweenEntries = 5;
 input bool   UseLondonTradingHours    = true;
-input int    TradingStartHourWIB      = 14;
-input int    TradingEndHourWIB        = 23;
+input int    TradingStartHourWIB      = 0;
+input int    TradingEndHourWIB        = 24;
 input int    TradingHourOffsetToWIB   = 0;              // Add this to broker server hour to get WIB
 
 // ================= REVERSAL MODE =================
@@ -414,6 +414,13 @@ bool IsTradingHourOpen()
    return(currentHour >= startHour || currentHour < endHour);
 }
 
+string TradingHoursLabel()
+{
+   if(!UseLondonTradingHours) return "OFF";
+   if(TradingStartHourWIB == 0 && TradingEndHourWIB == 24) return "24H WIB";
+   return(IntegerToString(TradingStartHourWIB) + ":00-" + IntegerToString(TradingEndHourWIB) + ":00 WIB");
+}
+
 double GetPositionEntryPriceFromHistory(const ulong positionId)
 {
    if(positionId == 0 || !HistorySelect(0, TimeCurrent())) return(0.0);
@@ -444,7 +451,7 @@ string BuildTechnicalSummary()
           "\nSNR Filter: " + (UseSNRFilter ? "ON" : "OFF") +
           "\nSNR Lookback/Zone: " + IntegerToString(SNRLookbackBars) + " / " + IntegerToString(SNRZonePoints) +
           "\nMomentum Extra Limit: " + (UseMomentumExtraLimit ? "ON" : "OFF") +
-          "\nTrading Hours WIB: " + (UseLondonTradingHours ? IntegerToString(TradingStartHourWIB) + ":00-" + IntegerToString(TradingEndHourWIB) + ":00" : "OFF") +
+          "\nTrading Hours: " + TradingHoursLabel() +
           "\nMode: Reversal + Limit + SL Plus + Trailing" +
           "\nPartial TP: " + (UsePartialTakeProfit ? "ON" : "OFF"));
 }
